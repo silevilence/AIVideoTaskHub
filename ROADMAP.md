@@ -2,22 +2,6 @@
 
 ## 📅 计划中
 
-- [ ] **[P0] 数据库与核心模型建立**
-    - [ ] 配置 SQLite 数据库
-        - 引入 `better-sqlite3` 并编写数据库连接工具
-        - 编写建表脚本（表名：`tasks`）
-    - [ ] 实现 Task 核心操作方法 (TDD 驱动)
-        - 编写数据库操作测试用例
-        - 实现 `insertTask`, `getTaskById`, `updateTaskStatus`, `getRunningTasks` 方法
-
-- [ ] **[P0] API 适配器策略模式实现**
-    - [ ] 定义 Provider 基础接口标准
-        - 统一 `createTask(params)`
-        - 统一 `getStatus(taskId)`
-        - 统一 `downloadVideo(videoUrl, targetPath)` （处理流式下载与可能的鉴权）
-    - [ ] 实现 Mock/测试适配器
-        - 编写一个模拟延迟 30 秒生成视频的 Mock 适配器用于开发测试
-
 - [ ] **[P0] 接入 SiliconFlow 视频生成 Provider**
     - [ ] 实现 `createTask` 接口适配
         - 请求 `POST https://api.siliconflow.cn/v1/video/submit`
@@ -77,3 +61,19 @@
     - [x] 搭建 Express 基础服务
         - 在 `src/server` 实现基础 HTTP 服务
         - 挂载静态资源中间件以托管前端构建产物
+
+- [x] **[P0] 数据库与核心模型建立**
+    - [x] 配置 SQLite 数据库
+        - 引入 `better-sqlite3` 并编写数据库连接工具
+        - 编写建表脚本（表名：`tasks`）
+    - [x] 实现 Task 核心操作方法 (TDD 驱动)
+        - 编写数据库操作测试用例
+        - 实现 `insertTask`, `getTaskById`, `updateTaskStatus`, `getRunningTasks` 方法
+
+- [x] **[P0] API 适配器策略模式实现**
+    - [x] 定义 Provider 基础接口标准
+        - 统一 `createTask(params)`
+        - 统一 `getStatus(taskId)`
+        - 统一 `downloadVideo(videoUrl, targetPath)` （处理流式下载与可能的鉴权）
+    - [x] 实现 Mock/测试适配器
+        - 编写一个模拟延迟 30 秒生成视频的 Mock 适配器用于开发测试
