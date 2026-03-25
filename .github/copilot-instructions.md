@@ -1,0 +1,54 @@
+# AI 辅助开发指导文件 (Copilot Instructions)
+
+## 📌 项目基本信息
+- **项目定位**：个人家用的 AI 视频生成 API 聚合与异步任务管理系统。
+- **架构模式**：前后端一体化（Monolithic），Node.js 作为 API 与静态资源服务器，单 Docker 镜像部署。
+
+## 🛠️ 技术栈与依赖包
+- **后端**：Node.js, Express, better-sqlite3 (轻量级数据库)
+- **前端**：React, Vite, shadcn/ui, Tailwind CSS (可选, 用于快速构建UI)
+- **工程化**：concurrently (本地同时启动前后端), Vitest / Jest (测试框架)
+- **语言**：Typescript
+
+## 📂 目录结构要求
+请严格遵循以下 2~3 层目录结构进行代码生成和修改：
+```text
+.
+├── src/
+│   ├── server/          # 后端代码 (API路由, 任务轮询, 数据库操作, 适配器)
+│   └── web/             # 前端代码 (React组件, 页面, API请求)
+├── tests/               # 单元测试与集成测试
+├── package.json         # 统一的依赖管理
+└── Dockerfile           # 单镜像构建脚本
+```
+
+## 💻 开发与命名规范
+- **变量与函数**：`camelCase` (例如：`createTask`, `videoUrl`)
+- **React 组件**：`PascalCase` (例如：`TaskList`, `CreateTaskModal`)
+- **数据库字段**：`snake_case` (例如：`task_id`, `created_at`)
+- **配置文件/普通文件**：`kebab-case` (例如：`task-router.js`)
+
+## 🚀 核心开发要求 (严格遵守)
+1. **测试驱动开发 (TDD) 强制执行**：在实现具体业务逻辑（如任务增删改查、API 适配器）之前，**必须**先编写对应的单元测试/接口测试。
+2. **禁止擅自更新文档**：除非用户在对话中明确要求，否则**绝对禁止**主动修改 `README.md`、`ROADMAP.md` 及本说明文件。
+3. **禁止擅自提交 Git**：除非用户明确下达类似 "commit changes" 或 "提交代码" 的指令，否则**绝对禁止**自动执行 git commit 命令。
+
+## 🌿 Git 提交规范
+当你被允许进行 Git 提交时，必须严格遵守以下格式：
+第一行：`<emoji> <type>: <简要说明>`
+如果有复杂修改，从第二行（空一行后）起进行详细说明。
+
+**Type 列表：**
+- `feat`: 新功能 (✨)
+- `fix`: 修复 Bug (🐛)
+- `docs`: 文档修改 (📚)
+- `style`: 代码格式化/无逻辑更改 (💎)
+- `refactor`: 重构 (♻️)
+- `test`: 增加测试 (🚨)
+- `chore`: 构建过程或辅助工具变动 (🔧)
+
+**示例：**
+✨ feat: 新增 Seedance 接口适配器
+
+- 实现了基于统一策略模式的创建任务接口
+- 实现了状态查询接口的字段映射
