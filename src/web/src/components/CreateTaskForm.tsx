@@ -1,5 +1,13 @@
 import { useState, useEffect } from 'react';
-import { fetchProviderModels, createTask, uploadImage } from '../api';
+import { fetchProviderModels, fetchProviders, createTask, uploadImage } from '../api';
+import type { ProviderInfo } from '../api';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Textarea } from './ui/textarea';
+import { Label } from './ui/label';
+import { Card, CardContent } from './ui/card';
+import { cn } from '../lib/utils';
+import { Sparkles, Upload, X } from 'lucide-react';
 
 function isI2VModel(model: string): boolean {
     return /I2V/i.test(model);
@@ -7,6 +15,7 @@ function isI2VModel(model: string): boolean {
 
 export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
+    const [providerInfos, setProviderInfos] = useState<ProviderInfo[]>([]);
     const [provider, setProvider] = useState('');
     const [prompt, setPrompt] = useState('');
     const [model, setModel] = useState('');
@@ -16,15 +25,16 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
 
-    const providers = Object.keys(providerModels);
+    const providers = Object.keys(providerModels).filter((p) => p !== 'mock');
     const models = provider ? (providerModels[provider] ?? []) : [];
     const showImageInput = isI2VModel(model);
 
     useEffect(() => {
-        fetchProviderModels()
-            .then((data) => {
+        Promise.all([fetchProviderModels(), fetchProviders()])
+            .then(([data, infos]) => {
                 setProviderModels(data);
-                const names = Object.keys(data);
+                setProviderInfos(infos);
+                const names = Object.keys(data).filter((p) => p !== 'mock');
                 if (names.length > 0 && !provider) {
                     setProvider(names[0]);
                     if (data[names[0]].length > 0) setModel(data[names[0]][0]);
@@ -81,6 +91,7 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
             setPrompt('');
             setImageUrl('');
             setPreviewUrl('');
+            setSubmitting(false);
             onCreated();
         } catch (err) {
             setError((err as Error).message);
@@ -89,113 +100,158 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
         }
     };
 
+    const selectClass = cn(
+        'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer',
+    );
+
     return (
-        <form
-            onSubmit={handleSubmit}
-            className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 space-y-3"
-        >
-            <div className="flex gap-3">
-                <div className="w-40">
-                    <label className="block text-xs text-gray-500 mb-1">
-                        平台
-                    </label>
-                    <select
-                        value={provider}
-                        onChange={(e) => handleProviderChange(e.target.value)}
-                        className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    >
-                        {providers.map((p) => (
-                            <option key={p} value={p}>
-                                {p}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-                <div className="flex-1">
-                    <label className="block text-xs text-gray-500 mb-1">
-                        模型
-                    </label>
-                    <select
-                        value={model}
-                        onChange={(e) => handleModelChange(e.target.value)}
-                        className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    >
-                        {models.map((m) => (
-                            <option key={m} value={m}>
-                                {m}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-            </div>
-
-            {showImageInput && (
-                <div>
-                    <label className="block text-xs text-gray-500 mb-1">
-                        参考图片 <span className="text-gray-300">(I2V 模式必填)</span>
-                    </label>
-                    <div className="flex gap-2 items-center">
-                        <input
-                            type="text"
-                            value={imageUrl.startsWith('data:') ? '(已上传本地图片)' : imageUrl}
-                            onChange={(e) => {
-                                setImageUrl(e.target.value);
-                                setPreviewUrl('');
-                            }}
-                            readOnly={imageUrl.startsWith('data:')}
-                            placeholder="输入图片 URL 或上传本地图片"
-                            className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                        />
-                        <label className="shrink-0 px-3 py-1.5 text-xs bg-gray-100 text-gray-600 border border-gray-300 rounded cursor-pointer hover:bg-gray-200">
-                            {uploading ? '上传中...' : '上传图片'}
-                            <input
-                                type="file"
-                                accept="image/png,image/jpeg,image/gif,image/webp"
-                                onChange={handleFileUpload}
-                                disabled={uploading}
-                                className="hidden"
-                            />
-                        </label>
-                    </div>
-                    {(previewUrl || (imageUrl && !imageUrl.startsWith('data:'))) && (
-                        <div className="mt-2 flex items-center gap-2">
-                            <img
-                                src={previewUrl || imageUrl}
-                                alt="预览"
-                                className="h-16 rounded border border-gray-200 object-cover"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => { setImageUrl(''); setPreviewUrl(''); }}
-                                className="text-xs text-red-400 hover:text-red-600"
-                            >
-                                移除
-                            </button>
-                        </div>
-                    )}
-                </div>
-            )}
-
+        <div className="max-w-2xl mx-auto space-y-6">
             <div>
-                <label className="block text-xs text-gray-500 mb-1">Prompt</label>
-                <textarea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="描述你想生成的视频内容..."
-                    rows={3}
-                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
+                <h2 className="text-xl font-heading font-bold tracking-wide">
+                    创建任务
+                </h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                    选择平台和模型，描述你想生成的视频
+                </p>
             </div>
 
-            {error && <p className="text-xs text-red-500">{error}</p>}
+            <Card>
+                <CardContent className="pt-6">
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="provider">平台</Label>
+                                <select
+                                    id="provider"
+                                    value={provider}
+                                    onChange={(e) =>
+                                        handleProviderChange(e.target.value)
+                                    }
+                                    className={selectClass}
+                                >
+                                    {providers.map((p) => {
+                                        const info = providerInfos.find((i) => i.name === p);
+                                        return (
+                                            <option key={p} value={p}>
+                                                {info?.displayName ?? p}
+                                            </option>
+                                        );
+                                    })}
+                                </select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="model">模型</Label>
+                                <select
+                                    id="model"
+                                    value={model}
+                                    onChange={(e) =>
+                                        handleModelChange(e.target.value)
+                                    }
+                                    className={selectClass}
+                                >
+                                    {models.map((m) => (
+                                        <option key={m} value={m}>
+                                            {m}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
 
-            <button
-                type="submit"
-                disabled={submitting || !prompt.trim()}
-                className="w-full bg-blue-600 text-white text-sm py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-                {submitting ? '提交中...' : '创建任务'}
-            </button>
-        </form>
+                        {showImageInput && (
+                            <div className="space-y-2">
+                                <Label>
+                                    参考图片{' '}
+                                    <span className="text-muted-foreground">
+                                        (I2V 模式必填)
+                                    </span>
+                                </Label>
+                                <div className="flex gap-2 items-center">
+                                    <Input
+                                        value={
+                                            imageUrl.startsWith('data:')
+                                                ? '(已上传本地图片)'
+                                                : imageUrl
+                                        }
+                                        onChange={(e) => {
+                                            setImageUrl(e.target.value);
+                                            setPreviewUrl('');
+                                        }}
+                                        readOnly={imageUrl.startsWith('data:')}
+                                        placeholder="输入图片 URL 或上传本地图片"
+                                    />
+                                    <label
+                                        className={cn(
+                                            'inline-flex items-center justify-center h-10 px-3 text-sm rounded-md border border-input shrink-0 whitespace-nowrap',
+                                            'bg-transparent cursor-pointer transition-colors duration-200',
+                                            'hover:bg-accent hover:text-accent-foreground',
+                                            uploading &&
+                                                'opacity-50 pointer-events-none',
+                                        )}
+                                    >
+                                        <Upload className="h-4 w-4 mr-1.5" />
+                                        {uploading ? '上传中...' : '上传'}
+                                        <input
+                                            type="file"
+                                            accept="image/png,image/jpeg,image/gif,image/webp"
+                                            onChange={handleFileUpload}
+                                            disabled={uploading}
+                                            className="hidden"
+                                        />
+                                    </label>
+                                </div>
+                                {(previewUrl ||
+                                    (imageUrl &&
+                                        !imageUrl.startsWith('data:'))) && (
+                                    <div className="flex items-center gap-3 mt-2">
+                                        <img
+                                            src={previewUrl || imageUrl}
+                                            alt="预览"
+                                            className="h-20 rounded-lg border border-border object-cover"
+                                        />
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                                setImageUrl('');
+                                                setPreviewUrl('');
+                                            }}
+                                        >
+                                            <X className="h-4 w-4 mr-1" /> 移除
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="space-y-2">
+                            <Label htmlFor="prompt">Prompt</Label>
+                            <Textarea
+                                id="prompt"
+                                value={prompt}
+                                onChange={(e) => setPrompt(e.target.value)}
+                                placeholder="描述你想生成的视频内容..."
+                                rows={4}
+                            />
+                        </div>
+
+                        {error && (
+                            <p className="text-sm text-destructive">{error}</p>
+                        )}
+
+                        <Button
+                            type="submit"
+                            className="w-full"
+                            disabled={submitting || !prompt.trim()}
+                        >
+                            <Sparkles className="h-4 w-4 mr-2" />
+                            {submitting ? '提交中...' : '创建任务'}
+                        </Button>
+                    </form>
+                </CardContent>
+            </Card>
+        </div>
     );
 }

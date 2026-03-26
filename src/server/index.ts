@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { initDb } from './database.js';
+import { getSetting } from './task-model.js';
 import { ProviderRegistry } from './provider-registry.js';
 import { MockProvider } from './providers/mock-provider.js';
 import { SiliconFlowProvider } from './providers/siliconflow-provider.js';
@@ -20,6 +21,23 @@ registry.register(
     defaultModel: process.env.SILICONFLOW_MODEL || undefined,
   })
 );
+
+// 从数据库加载已保存的 Provider 设置
+for (const name of registry.listNames()) {
+  const provider = registry.get(name);
+  if (!provider) continue;
+  const schema = provider.getSettingsSchema();
+  if (schema.length === 0) continue;
+  const saved: Record<string, string> = {};
+  for (const s of schema) {
+    const val = getSetting(`provider:${name}:${s.key}`);
+    if (val) saved[s.key] = val;
+  }
+  if (Object.keys(saved).length > 0) {
+    provider.applySettings(saved);
+    console.log(`[server] loaded saved settings for provider: ${name}`);
+  }
+}
 
 console.log(`[server] registered providers: ${registry.listNames().join(', ')}`);
 

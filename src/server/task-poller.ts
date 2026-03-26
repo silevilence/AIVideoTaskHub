@@ -31,6 +31,8 @@ export class TaskPoller {
         if (this.timer) return;
         this.timer = setInterval(() => this.poll(), this.intervalMs);
         console.log(`[poller] started, interval: ${this.intervalMs}ms`);
+        // 立即执行一次轮询，处理重启前遗留的任务
+        this.poll();
     }
 
     stop(): void {

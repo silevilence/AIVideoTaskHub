@@ -30,9 +30,23 @@ export function initDb(dbPath: string = process.env.DB_PATH || DEFAULT_DB_PATH):
             error_message   TEXT,
             retry_count     INTEGER NOT NULL DEFAULT 0,
             created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-            updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+            updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            deleted_at      TEXT
         );
     `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    `);
+
+    // 为已有的数据库添加 deleted_at 字段
+    const columns = db.pragma('table_info(tasks)') as { name: string }[];
+    if (!columns.some((c) => c.name === 'deleted_at')) {
+        db.exec('ALTER TABLE tasks ADD COLUMN deleted_at TEXT');
+    }
 }
 
 /** 获取当前数据库实例 */

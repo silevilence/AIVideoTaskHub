@@ -13,6 +13,7 @@ export interface Task {
     retry_count: number;
     created_at: string;
     updated_at: string;
+    deleted_at: string | null;
 }
 
 export interface InsertTaskParams {
@@ -50,10 +51,10 @@ export function insertTask(params: InsertTaskParams): Task {
     return task;
 }
 
-/** 根据 id 获取单条任务 */
+/** 根据 id 获取单条任务（排除已软删除） */
 export function getTaskById(id: number): Task | undefined {
     const db = getDb();
-    return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as
+    return db.prepare('SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL').get(id) as
         | Task
         | undefined;
 }
@@ -92,21 +93,79 @@ export function updateTaskStatus(
 export function getRunningTasks(): Task[] {
     const db = getDb();
     return db
-        .prepare("SELECT * FROM tasks WHERE status IN ('pending', 'running')")
+        .prepare("SELECT * FROM tasks WHERE status IN ('pending', 'running') AND deleted_at IS NULL")
         .all() as Task[];
 }
 
-/** 获取所有任务，按创建时间倒序 */
+/** 获取所有任务，按创建时间倒序（排除已软删除） */
 export function getAllTasks(): Task[] {
     const db = getDb();
     return db
-        .prepare('SELECT * FROM tasks ORDER BY id DESC')
+        .prepare('SELECT * FROM tasks WHERE deleted_at IS NULL ORDER BY id DESC')
         .all() as Task[];
 }
 
-/** 删除指定任务，返回是否成功删除 */
+/** 软删除指定任务，返回是否成功 */
 export function deleteTask(id: number): boolean {
     const db = getDb();
-    const result = db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+    const result = db.prepare("UPDATE tasks SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").run(id);
     return result.changes > 0;
+}
+
+/** 筛选任务列表 */
+export interface TaskFilter {
+    providers?: string[];
+    statuses?: string[];
+    prompt?: string;
+    startDate?: string;
+    endDate?: string;
+}
+
+export function filterTasks(filter: TaskFilter): Task[] {
+    const db = getDb();
+    const conditions: string[] = ['deleted_at IS NULL'];
+    const params: Record<string, unknown> = {};
+
+    if (filter.providers && filter.providers.length > 0) {
+        const placeholders = filter.providers.map((_, i) => `@p${i}`);
+        conditions.push(`provider IN (${placeholders.join(', ')})`);
+        filter.providers.forEach((p, i) => { params[`p${i}`] = p; });
+    }
+
+    if (filter.statuses && filter.statuses.length > 0) {
+        const placeholders = filter.statuses.map((_, i) => `@s${i}`);
+        conditions.push(`status IN (${placeholders.join(', ')})`);
+        filter.statuses.forEach((s, i) => { params[`s${i}`] = s; });
+    }
+
+    if (filter.prompt) {
+        conditions.push('prompt LIKE @prompt');
+        params.prompt = `%${filter.prompt}%`;
+    }
+
+    if (filter.startDate) {
+        conditions.push('created_at >= @startDate');
+        params.startDate = filter.startDate;
+    }
+
+    if (filter.endDate) {
+        conditions.push('created_at <= @endDate');
+        params.endDate = filter.endDate;
+    }
+
+    const sql = `SELECT * FROM tasks WHERE ${conditions.join(' AND ')} ORDER BY id DESC`;
+    return db.prepare(sql).all(params) as Task[];
+}
+
+/** 读取一条设置 */
+export function getSetting(key: string): string | undefined {
+    const db = getDb();
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return row?.value;
+}
+
+/** 写入/更新一条设置 */
+export function setSetting(key: string, value: string): void {
+    const db = getDb();
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
 }

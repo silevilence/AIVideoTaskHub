@@ -4,6 +4,7 @@ import type {
     CreateTaskParams,
     CreateTaskResult,
     TaskStatusResult,
+    ProviderSettingSchema,
 } from '../provider.js';
 
 export interface MockProviderOptions {
@@ -22,6 +23,7 @@ interface MockTask {
 
 export class MockProvider implements VideoProvider {
     readonly name = 'mock';
+    readonly displayName = 'Mock (测试)';
     readonly models = ['mock-model'];
     private readonly delayMs: number;
     private readonly failRate: number;
@@ -30,6 +32,18 @@ export class MockProvider implements VideoProvider {
     constructor(options?: MockProviderOptions) {
         this.delayMs = options?.delayMs ?? 30_000;
         this.failRate = options?.failRate ?? 0;
+    }
+
+    getSettingsSchema(): ProviderSettingSchema[] {
+        return [];
+    }
+
+    applySettings(_settings: Record<string, string>): void {
+        // Mock provider 无需配置
+    }
+
+    getCurrentSettings(): Record<string, string> {
+        return {};
     }
 
     async createTask(params: CreateTaskParams): Promise<CreateTaskResult> {

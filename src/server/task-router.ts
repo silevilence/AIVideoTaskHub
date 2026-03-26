@@ -3,13 +3,15 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type { ProviderRegistry } from './provider-registry.js';
-import { SiliconFlowProvider } from './providers/siliconflow-provider.js';
 import {
     insertTask,
     getTaskById,
     getAllTasks,
     deleteTask,
     updateTaskStatus,
+    getSetting,
+    setSetting,
+    filterTasks,
 } from './task-model.js';
 
 export function createTaskRouter(registry: ProviderRegistry): Router {
@@ -17,7 +19,11 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
 
     // 获取已注册的 provider 列表
     router.get('/providers', (_req, res) => {
-        res.json(registry.listNames());
+        const list = registry.listNames().map((name) => {
+            const provider = registry.get(name);
+            return { name, displayName: provider?.displayName ?? name };
+        });
+        res.json(list);
     });
 
     // 获取每个 provider 的模型列表
@@ -32,23 +38,46 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
         res.json(result);
     });
 
-    // 获取设置（脱敏的 API Key 等）
+    // 获取所有 Provider 的设置 schema + 当前值
     router.get('/settings', (_req, res) => {
-        const sf = registry.get('siliconflow');
-        res.json({
-            siliconflowApiKey: sf instanceof SiliconFlowProvider ? sf.getMaskedApiKey() : '',
-        });
-    });
-
-    // 更新设置
-    router.put('/settings', (req, res) => {
-        const { siliconflowApiKey } = req.body;
-        if (typeof siliconflowApiKey === 'string' && siliconflowApiKey.trim()) {
-            const sf = registry.get('siliconflow');
-            if (sf instanceof SiliconFlowProvider) {
-                sf.setApiKey(siliconflowApiKey.trim());
+        const result: Record<string, { displayName: string; schema: ReturnType<typeof registry.get extends (...a: unknown[]) => infer R ? R : never>; values: Record<string, string> }> = {};
+        for (const name of registry.listNames()) {
+            const provider = registry.get(name);
+            if (provider) {
+                const schema = provider.getSettingsSchema();
+                if (schema.length > 0) {
+                    result[name] = {
+                        displayName: provider.displayName,
+                        schema: schema as never,
+                        values: provider.getCurrentSettings(),
+                    };
+                }
             }
         }
+        res.json(result);
+    });
+
+    // 更新指定 Provider 的设置
+    router.put('/settings/:provider', (req, res) => {
+        const providerName = req.params.provider;
+        const provider = registry.get(providerName);
+        if (!provider) {
+            res.status(404).json({ error: `Provider "${providerName}" 不存在` });
+            return;
+        }
+        const settings = req.body as Record<string, string>;
+        if (!settings || typeof settings !== 'object') {
+            res.status(400).json({ error: '无效的设置数据' });
+            return;
+        }
+        // 持久化到数据库
+        for (const [key, value] of Object.entries(settings)) {
+            if (typeof value === 'string' && value.trim()) {
+                setSetting(`provider:${providerName}:${key}`, value.trim());
+            }
+        }
+        // 应用到 Provider 实例
+        provider.applySettings(settings);
         res.json({ ok: true });
     });
 
@@ -137,9 +166,22 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
     });
 
     // 获取所有任务
-    router.get('/tasks', (_req, res) => {
-        const tasks = getAllTasks();
-        res.json(tasks);
+    router.get('/tasks', (req, res) => {
+        const { providers, statuses, prompt, startDate, endDate } = req.query;
+        const hasFilter = providers || statuses || prompt || startDate || endDate;
+
+        if (hasFilter) {
+            const filter = {
+                providers: typeof providers === 'string' ? providers.split(',').filter(Boolean) : undefined,
+                statuses: typeof statuses === 'string' ? statuses.split(',').filter(Boolean) : undefined,
+                prompt: typeof prompt === 'string' ? prompt : undefined,
+                startDate: typeof startDate === 'string' ? startDate : undefined,
+                endDate: typeof endDate === 'string' ? endDate : undefined,
+            };
+            res.json(filterTasks(filter));
+        } else {
+            res.json(getAllTasks());
+        }
     });
 
     // 获取任务详情

@@ -16,9 +16,14 @@ function createStubProvider(
 ): VideoProvider {
     return {
         name,
+        displayName: name,
+        models: ['stub-model'],
         createTask: vi.fn().mockResolvedValue({ providerTaskId: 'stub-id' }),
         getStatus: overrides.getStatus ?? vi.fn().mockResolvedValue({ status: 'running' }),
         downloadVideo: overrides.downloadVideo ?? vi.fn().mockResolvedValue(undefined),
+        getSettingsSchema: vi.fn().mockReturnValue([]),
+        applySettings: vi.fn(),
+        getCurrentSettings: vi.fn().mockReturnValue({}),
     };
 }
 

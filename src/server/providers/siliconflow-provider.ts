@@ -7,6 +7,7 @@ import type {
     CreateTaskResult,
     TaskStatusResult,
     TaskStatus,
+    ProviderSettingSchema,
 } from '../provider.js';
 
 const BASE_URL = 'https://api.siliconflow.cn/v1/video';
@@ -30,6 +31,7 @@ export interface SiliconFlowProviderOptions {
 
 export class SiliconFlowProvider implements VideoProvider {
     readonly name = 'siliconflow';
+    readonly displayName = 'SiliconFlow 硅基流动';
     readonly models = [
         'Wan-AI/Wan2.2-T2V-A14B',
         'Wan-AI/Wan2.2-I2V-A14B',
@@ -42,6 +44,30 @@ export class SiliconFlowProvider implements VideoProvider {
         this.apiKey = options.apiKey;
         this.defaultModel = options.defaultModel ?? 'Wan-AI/Wan2.2-T2V-A14B';
         this.defaultImageSize = options.defaultImageSize ?? '1280x720';
+    }
+
+    getSettingsSchema(): ProviderSettingSchema[] {
+        return [
+            {
+                key: 'api_key',
+                label: 'API Key',
+                secret: true,
+                required: true,
+                description: 'SiliconFlow 平台的 API 密钥',
+            },
+        ];
+    }
+
+    applySettings(settings: Record<string, string>): void {
+        if (settings.api_key) {
+            this.apiKey = settings.api_key;
+        }
+    }
+
+    getCurrentSettings(): Record<string, string> {
+        return {
+            api_key: this.getMaskedApiKey(),
+        };
     }
 
     /** 运行时更新 API Key */

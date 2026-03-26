@@ -10,10 +10,14 @@ import type { VideoProvider } from '../src/server/provider.js';
 function createMockProvider(name = 'mock', models = ['model-a']): VideoProvider {
     return {
         name,
+        displayName: name,
         models,
         createTask: vi.fn().mockResolvedValue({ providerTaskId: 'prov-123' }),
         getStatus: vi.fn().mockResolvedValue({ status: 'pending' }),
         downloadVideo: vi.fn().mockResolvedValue(undefined),
+        getSettingsSchema: vi.fn().mockReturnValue([]),
+        applySettings: vi.fn(),
+        getCurrentSettings: vi.fn().mockReturnValue({}),
     };
 }
 
@@ -234,7 +238,7 @@ describe('任务路由 API', () => {
         it('应返回已注册的 provider 列表', async () => {
             const res = await request(app).get('/api/providers');
             expect(res.status).toBe(200);
-            expect(res.body).toEqual(['mock']);
+            expect(res.body).toEqual([{ name: 'mock', displayName: 'mock' }]);
         });
 
         it('注册多个 provider 时应全部返回', async () => {
@@ -243,8 +247,9 @@ describe('任务路由 API', () => {
 
             const res = await request(app).get('/api/providers');
             expect(res.status).toBe(200);
-            expect(res.body).toContain('mock');
-            expect(res.body).toContain('siliconflow');
+            const names = res.body.map((p: { name: string }) => p.name);
+            expect(names).toContain('mock');
+            expect(names).toContain('siliconflow');
         });
     });
 
@@ -287,20 +292,44 @@ describe('任务路由 API', () => {
     });
 
     describe('GET /api/settings', () => {
-        it('应返回设置信息', async () => {
+        it('应返回所有 Provider 设置信息', async () => {
+            // 注册一个带设置的 provider
+            const sfProvider = createMockProvider('siliconflow');
+            (sfProvider.getSettingsSchema as ReturnType<typeof vi.fn>).mockReturnValue([
+                { key: 'api_key', label: 'API Key', secret: true, required: true },
+            ]);
+            (sfProvider.getCurrentSettings as ReturnType<typeof vi.fn>).mockReturnValue({ api_key: 'sk-****1234' });
+            registry.register(sfProvider);
+
             const res = await request(app).get('/api/settings');
             expect(res.status).toBe(200);
-            expect(res.body).toHaveProperty('siliconflowApiKey');
+            expect(res.body).toHaveProperty('siliconflow');
+            expect(res.body.siliconflow.schema).toHaveLength(1);
+            expect(res.body.siliconflow.values.api_key).toBe('sk-****1234');
         });
     });
 
-    describe('PUT /api/settings', () => {
-        it('应成功更新设置', async () => {
+    describe('PUT /api/settings/:provider', () => {
+        it('应成功更新 Provider 设置', async () => {
+            const sfProvider = createMockProvider('siliconflow');
+            (sfProvider.getSettingsSchema as ReturnType<typeof vi.fn>).mockReturnValue([
+                { key: 'api_key', label: 'API Key', secret: true },
+            ]);
+            registry.register(sfProvider);
+
             const res = await request(app)
-                .put('/api/settings')
-                .send({ siliconflowApiKey: 'sk-test-key' });
+                .put('/api/settings/siliconflow')
+                .send({ api_key: 'sk-test-key' });
             expect(res.status).toBe(200);
             expect(res.body.ok).toBe(true);
+            expect(sfProvider.applySettings).toHaveBeenCalledWith({ api_key: 'sk-test-key' });
+        });
+
+        it('不存在的 provider 应返回 404', async () => {
+            const res = await request(app)
+                .put('/api/settings/nonexistent')
+                .send({ api_key: 'test' });
+            expect(res.status).toBe(404);
         });
     });
 });

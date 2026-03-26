@@ -11,17 +11,38 @@ export interface Task {
     retry_count: number;
     created_at: string;
     updated_at: string;
+    deleted_at: string | null;
 }
 
 const BASE = '/api';
 
-export async function fetchTasks(): Promise<Task[]> {
-    const res = await fetch(`${BASE}/tasks`);
+export interface ProviderInfo {
+    name: string;
+    displayName: string;
+}
+
+export interface TaskFilter {
+    providers?: string[];
+    statuses?: string[];
+    prompt?: string;
+    startDate?: string;
+    endDate?: string;
+}
+
+export async function fetchTasks(filter?: TaskFilter): Promise<Task[]> {
+    const params = new URLSearchParams();
+    if (filter?.providers?.length) params.set('providers', filter.providers.join(','));
+    if (filter?.statuses?.length) params.set('statuses', filter.statuses.join(','));
+    if (filter?.prompt) params.set('prompt', filter.prompt);
+    if (filter?.startDate) params.set('startDate', filter.startDate);
+    if (filter?.endDate) params.set('endDate', filter.endDate);
+    const qs = params.toString();
+    const res = await fetch(`${BASE}/tasks${qs ? `?${qs}` : ''}`);
     if (!res.ok) throw new Error('获取任务列表失败');
     return res.json();
 }
 
-export async function fetchProviders(): Promise<string[]> {
+export async function fetchProviders(): Promise<ProviderInfo[]> {
     const res = await fetch(`${BASE}/providers`);
     if (!res.ok) throw new Error('获取 Provider 列表失败');
     return res.json();
@@ -46,18 +67,29 @@ export async function uploadImage(file: File): Promise<{ url: string; base64: st
     return res.json();
 }
 
-export interface Settings {
-    siliconflowApiKey: string;
+export interface ProviderSettingSchema {
+    key: string;
+    label: string;
+    secret?: boolean;
+    required?: boolean;
+    defaultValue?: string;
+    description?: string;
 }
 
-export async function fetchSettings(): Promise<Settings> {
+export interface ProviderSettings {
+    displayName: string;
+    schema: ProviderSettingSchema[];
+    values: Record<string, string>;
+}
+
+export async function fetchSettings(): Promise<Record<string, ProviderSettings>> {
     const res = await fetch(`${BASE}/settings`);
     if (!res.ok) throw new Error('获取设置失败');
     return res.json();
 }
 
-export async function updateSettings(settings: Partial<Settings>): Promise<void> {
-    const res = await fetch(`${BASE}/settings`, {
+export async function updateProviderSettings(provider: string, settings: Record<string, string>): Promise<void> {
+    const res = await fetch(`${BASE}/settings/${encodeURIComponent(provider)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),
