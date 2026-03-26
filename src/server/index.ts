@@ -1,9 +1,15 @@
 import app from './app.js';
+import { initDb } from './database.js';
 import { ProviderRegistry } from './provider-registry.js';
 import { MockProvider } from './providers/mock-provider.js';
 import { SiliconFlowProvider } from './providers/siliconflow-provider.js';
+import { TaskPoller } from './task-poller.js';
 
 const PORT = process.env.PORT || 3000;
+
+// 初始化数据库
+initDb();
+console.log('[server] database initialized');
 
 // 初始化 Provider 注册表
 const registry = new ProviderRegistry();
@@ -21,7 +27,15 @@ if (process.env.SILICONFLOW_API_KEY) {
 
 console.log(`[server] registered providers: ${registry.listNames().join(', ')}`);
 
-export { registry };
+// 启动任务轮询调度
+const poller = new TaskPoller({
+  registry,
+  intervalMs: Number(process.env.POLL_INTERVAL_MS) || 5000,
+  maxRetries: Number(process.env.MAX_RETRIES) || 3,
+});
+poller.start();
+
+export { registry, poller };
 
 app.listen(PORT, () => {
   console.log(`[server] running at http://localhost:${PORT}`);

@@ -13,6 +13,10 @@ app.use(express.json());
 const distPath = path.resolve(__dirname, '../web/dist');
 app.use(express.static(distPath));
 
+// 托管下载的视频文件
+const videosPath = path.resolve(process.env.DATA_DIR || 'data/videos');
+app.use('/videos', express.static(videosPath));
+
 // API 健康检查
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
