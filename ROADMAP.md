@@ -2,20 +2,6 @@
 
 ## 📅 计划中
 
-- [ ] **[P0] 接入 SiliconFlow 视频生成 Provider**
-    - [ ] 实现 `createTask` 接口适配
-        - 请求 `POST https://api.siliconflow.cn/v1/video/submit`
-        - 根据配置的 model (i2v/t2v) 动态组装 prompt 和 image 参数
-        - 解析并返回统一的 taskId
-        - 文档 `https://docs.siliconflow.cn/cn/api-reference/videos/videos_submit`，实现前请参考
-    - [ ] 实现 `getStatus` 接口适配
-        - 请求 `GET https://api.siliconflow.cn/v1/video/status`
-        - 映射平台状态到统一状态 (`pending` / `running` / `success` / `failed`)
-        - 提取成功后的临时视频 URL
-        - 文档 `https://docs.siliconflow.cn/cn/api-reference/videos/get_videos_status`，实现前请参考
-    - [ ] 实现 `downloadVideo` 接口适配
-        - 使用 axios (stream 模式) 或 Node 原生 stream 将临时 URL 下载至本地
-
 - [ ] **[P0] 任务轮询调度系统**
     - [ ] 实现后台 Worker 逻辑
         - 使用 `setInterval` 定时（如每隔 5 秒）查询数据库中处于 `running` / `pending` 的任务
@@ -48,6 +34,20 @@
     - 更新 `README.md` 的安装与部署说明
 
 ## 🚧 开发中
+
+- [ ] **[P0] 接入 SiliconFlow 视频生成 Provider**
+    - [ ] 实现 `createTask` 接口适配
+        - 请求 `POST https://api.siliconflow.cn/v1/video/submit`
+        - 根据配置的 model (i2v/t2v) 动态组装 prompt 和 image 参数
+        - 解析并返回统一的 taskId
+        - 文档 `https://docs.siliconflow.cn/cn/api-reference/videos/videos_submit`，实现前请参考
+    - [ ] 实现 `getStatus` 接口适配
+        - 请求 `POST https://api.siliconflow.cn/v1/video/status`
+        - 映射平台状态到统一状态 (`pending` / `running` / `success` / `failed`)
+        - 提取成功后的临时视频 URL
+        - 文档 `https://docs.siliconflow.cn/cn/api-reference/videos/get_videos_status`，实现前请参考
+    - [ ] 实现 `downloadVideo` 接口适配
+        - 使用 axios (stream 模式) 或 Node 原生 stream 将临时 URL 下载至本地
 
 ## ✅ 已完成
 
