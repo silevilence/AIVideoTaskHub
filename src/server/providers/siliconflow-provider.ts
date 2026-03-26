@@ -30,7 +30,11 @@ export interface SiliconFlowProviderOptions {
 
 export class SiliconFlowProvider implements VideoProvider {
     readonly name = 'siliconflow';
-    private readonly apiKey: string;
+    readonly models = [
+        'Wan-AI/Wan2.2-T2V-A14B',
+        'Wan-AI/Wan2.2-I2V-A14B',
+    ];
+    private apiKey: string;
     private readonly defaultModel: string;
     private readonly defaultImageSize: ImageSize;
 
@@ -38,6 +42,18 @@ export class SiliconFlowProvider implements VideoProvider {
         this.apiKey = options.apiKey;
         this.defaultModel = options.defaultModel ?? 'Wan-AI/Wan2.2-T2V-A14B';
         this.defaultImageSize = options.defaultImageSize ?? '1280x720';
+    }
+
+    /** 运行时更新 API Key */
+    setApiKey(key: string): void {
+        this.apiKey = key;
+    }
+
+    /** 获取当前 API Key（脱敏） */
+    getMaskedApiKey(): string {
+        if (!this.apiKey) return '';
+        if (this.apiKey.length <= 8) return '****';
+        return this.apiKey.slice(0, 4) + '****' + this.apiKey.slice(-4);
     }
 
     async createTask(params: CreateTaskParams): Promise<CreateTaskResult> {

@@ -95,3 +95,18 @@ export function getRunningTasks(): Task[] {
         .prepare("SELECT * FROM tasks WHERE status IN ('pending', 'running')")
         .all() as Task[];
 }
+
+/** 获取所有任务，按创建时间倒序 */
+export function getAllTasks(): Task[] {
+    const db = getDb();
+    return db
+        .prepare('SELECT * FROM tasks ORDER BY id DESC')
+        .all() as Task[];
+}
+
+/** 删除指定任务，返回是否成功删除 */
+export function deleteTask(id: number): boolean {
+    const db = getDb();
+    const result = db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+    return result.changes > 0;
+}

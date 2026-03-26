@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
 
 let db: Database.Database | null = null;
 const DEFAULT_DB_PATH = 'data/app.db';
@@ -8,6 +10,9 @@ const DEFAULT_DB_PATH = 'data/app.db';
  * @param dbPath 数据库文件路径，传 ':memory:' 为内存数据库（测试用）
  */
 export function initDb(dbPath: string = process.env.DB_PATH || DEFAULT_DB_PATH): void {
+    if (dbPath !== ':memory:') {
+        fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    }
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');

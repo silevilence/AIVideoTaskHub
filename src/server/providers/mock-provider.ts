@@ -22,6 +22,7 @@ interface MockTask {
 
 export class MockProvider implements VideoProvider {
     readonly name = 'mock';
+    readonly models = ['mock-model'];
     private readonly delayMs: number;
     private readonly failRate: number;
     private readonly tasks = new Map<string, MockTask>();

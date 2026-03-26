@@ -27,6 +27,9 @@ export interface VideoProvider {
     /** Provider 唯一名称标识 */
     readonly name: string;
 
+    /** 可用模型列表 */
+    readonly models: string[];
+
     /** 向平台提交生成任务，返回平台侧任务 ID */
     createTask(params: CreateTaskParams): Promise<CreateTaskResult>;
 
