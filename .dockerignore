@@ -1,0 +1,9 @@
+node_modules
+data
+.git
+.github
+tests
+*.md
+src/web/dist
+src/web/node_modules
+.vscode

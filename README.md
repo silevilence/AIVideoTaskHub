@@ -14,18 +14,80 @@
 
 ---
 
-## 🛠️ 安装与运行 (待完善)
+## 🛠️ 安装与运行
 
-*(说明：此章节将在基础架构开发完成后补充)*
+### 前提条件
+
+- **本地开发**：Node.js >= 18
+- **Docker 部署**：Docker >= 20, Docker Compose V2
 
 ### 本地开发环境
 
 ```bash
-# 预留说明
+# 克隆项目
+git clone <your-repo-url>
+cd AIVideoTaskHub
+
+# 安装依赖
+npm install
+
+# 启动开发服务（同时启动后端 + 前端热更新）
+npm run dev
 ```
+
+开发模式下前端运行在 `http://localhost:5173`，后端 API 运行在 `http://localhost:3000`，前端已配置代理自动转发 API 请求。
 
 ### Docker 部署
 
+**方式一：Docker Compose（推荐）**
+
 ```bash
-# 预留说明
+# 按需在 .env 文件或环境变量中配置 API Key
+export SILICONFLOW_API_KEY=your_api_key
+
+# 构建并启动
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+
+# 停止服务
+docker compose down
 ```
+
+**方式二：直接使用 Docker**
+
+```bash
+# 构建镜像
+docker build -t ai-video-task-hub .
+
+# 运行容器
+docker run -d \
+  --name ai-video-task-hub \
+  -p 3000:3000 \
+  -v $(pwd)/data:/app/data \
+  -e SILICONFLOW_API_KEY=your_api_key \
+  ai-video-task-hub
+```
+
+启动后访问 `http://localhost:3000` 即可使用。
+
+### 数据持久化
+
+所有持久化数据存储在 `data/` 目录下，通过 Docker Volume 映射到宿主机：
+
+| 路径 | 说明 |
+|------|------|
+| `data/app.db` | SQLite 数据库文件 |
+| `data/videos/` | 下载的视频文件 |
+| `data/uploads/` | 上传的图片文件 |
+
+### 环境变量
+
+| 变量名 | 默认值 | 说明 |
+|--------|--------|------|
+| `PORT` | `3000` | 服务监听端口 |
+| `SILICONFLOW_API_KEY` | - | SiliconFlow API 密钥 |
+| `DB_PATH` | `data/app.db` | 数据库文件路径 |
+| `POLL_INTERVAL_MS` | `5000` | 任务轮询间隔（毫秒） |
+| `MAX_RETRIES` | `3` | 任务最大重试次数 |

@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    container_name: ai-video-task-hub
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
+    restart: unless-stopped
