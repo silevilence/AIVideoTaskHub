@@ -28,6 +28,7 @@ export function initDb(dbPath: string = process.env.DB_PATH || DEFAULT_DB_PATH):
             image_url       TEXT,
             result_url      TEXT,
             error_message   TEXT,
+            extra_params    TEXT,
             retry_count     INTEGER NOT NULL DEFAULT 0,
             created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
             updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -46,6 +47,9 @@ export function initDb(dbPath: string = process.env.DB_PATH || DEFAULT_DB_PATH):
     const columns = db.pragma('table_info(tasks)') as { name: string }[];
     if (!columns.some((c) => c.name === 'deleted_at')) {
         db.exec('ALTER TABLE tasks ADD COLUMN deleted_at TEXT');
+    }
+    if (!columns.some((c) => c.name === 'extra_params')) {
+        db.exec('ALTER TABLE tasks ADD COLUMN extra_params TEXT');
     }
 }
 

@@ -22,6 +22,7 @@ import {
     X,
     Search,
     Filter,
+    Info,
 } from 'lucide-react';
 
 type BadgeVariant = 'warning' | 'default' | 'success' | 'destructive';
@@ -36,6 +37,21 @@ const STATUS_CONFIG: Record<
     failed: { label: '失败', variant: 'destructive', icon: XCircle },
 };
 
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+    'doubao-seedance-1-5-pro-251215': 'Seedance 1.5 Pro',
+    'doubao-seedance-1-0-pro-250528': 'Seedance 1.0 Pro',
+    'doubao-seedance-1-0-pro-fast-251015': 'Seedance 1.0 Pro Fast',
+    'doubao-seedance-1-0-lite-t2v-250428': 'Seedance 1.0 Lite (T2V)',
+    'doubao-seedance-1-0-lite-i2v-250428': 'Seedance 1.0 Lite (I2V)',
+    'Wan-AI/Wan2.2-T2V-A14B': 'Wan2.2 T2V',
+    'Wan-AI/Wan2.2-I2V-A14B': 'Wan2.2 I2V',
+};
+
+function getModelDisplayName(modelId: string | null): string | null {
+    if (!modelId) return null;
+    return MODEL_DISPLAY_NAMES[modelId] ?? modelId;
+}
+
 const ALL_STATUSES = ['pending', 'running', 'success', 'failed'];
 
 export function TaskList({ refreshKey }: { refreshKey: number }) {
@@ -43,6 +59,7 @@ export function TaskList({ refreshKey }: { refreshKey: number }) {
     const [loading, setLoading] = useState(true);
     const [providers, setProviders] = useState<ProviderInfo[]>([]);
     const [previewTask, setPreviewTask] = useState<Task | null>(null);
+    const [paramsTask, setParamsTask] = useState<Task | null>(null);
 
     // Filter state
     const [filterOpen, setFilterOpen] = useState(false);
@@ -292,6 +309,7 @@ export function TaskList({ refreshKey }: { refreshKey: number }) {
                             onRetry={handleRetry}
                             onDelete={handleDelete}
                             onPreview={setPreviewTask}
+                            onShowParams={setParamsTask}
                             providerDisplayName={providerDisplayName}
                         />
                     ))}
@@ -306,6 +324,15 @@ export function TaskList({ refreshKey }: { refreshKey: number }) {
                     providerDisplayName={providerDisplayName}
                 />
             )}
+
+            {/* 任务参数弹窗 */}
+            {paramsTask && (
+                <TaskParamsModal
+                    task={paramsTask}
+                    onClose={() => setParamsTask(null)}
+                    providerDisplayName={providerDisplayName}
+                />
+            )}
         </div>
     );
 }
@@ -315,12 +342,14 @@ function TaskCard({
     onRetry,
     onDelete,
     onPreview,
+    onShowParams,
     providerDisplayName,
 }: {
     task: Task;
     onRetry: (id: number) => void;
     onDelete: (id: number) => void;
     onPreview: (task: Task) => void;
+    onShowParams: (task: Task) => void;
     providerDisplayName: (name: string) => string;
 }) {
     const config = STATUS_CONFIG[task.status] ?? {
@@ -344,7 +373,7 @@ function TaskCard({
                             </Badge>
                             <span className="text-xs text-muted-foreground">
                                 {providerDisplayName(task.provider)}
-                                {task.model ? ` · ${task.model}` : ''}
+                                {task.model ? ` · ${getModelDisplayName(task.model)}` : ''}
                             </span>
                             <span className="text-xs text-muted-foreground/50">
                                 #{task.id}
@@ -404,10 +433,124 @@ function TaskCard({
                         >
                             <Trash2 className="h-3.5 w-3.5" />
                         </Button>
+                        {task.extra_params && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => onShowParams(task)}
+                                className="text-muted-foreground"
+                                title="查看任务参数"
+                            >
+                                <Info className="h-3.5 w-3.5" />
+                            </Button>
+                        )}
                     </div>
                 </div>
             </CardContent>
         </Card>
+    );
+}
+
+// ── 参数显示名映射 ──────────────────────────
+const PARAM_LABELS: Record<string, string> = {
+    ratio: '宽高比',
+    resolution: '分辨率',
+    duration: '时长(秒)',
+    seed: '种子',
+    watermark: '水印',
+    generateAudio: '生成音频',
+    cameraFixed: '固定镜头',
+    returnLastFrame: '返回尾帧',
+    serviceTier: '服务等级',
+    draft: '样片模式',
+    lastFrameImageUrl: '尾帧图片',
+    referenceImageUrls: '参考图片',
+};
+
+function formatParamValue(key: string, value: unknown): string {
+    if (typeof value === 'boolean') return value ? '是' : '否';
+    if (key === 'duration' && value === -1) return '自动';
+    if (key === 'seed' && value === -1) return '随机';
+    if (key === 'serviceTier') return value === 'flex' ? '离线推理' : '在线推理';
+    if (Array.isArray(value)) return value.length + ' 张';
+    if (typeof value === 'string' && value.startsWith('data:')) return '(本地上传)';
+    return String(value);
+}
+
+function TaskParamsModal({
+    task,
+    onClose,
+    providerDisplayName,
+}: {
+    task: Task;
+    onClose: () => void;
+    providerDisplayName: (name: string) => string;
+}) {
+    const params: Record<string, unknown> = (() => {
+        try {
+            return task.extra_params ? JSON.parse(task.extra_params) : {};
+        } catch {
+            return {};
+        }
+    })();
+
+    const entries = Object.entries(params);
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+            onClick={onClose}
+        >
+            <div
+                className="relative w-full max-w-md mx-4 rounded-xl border border-border bg-card shadow-2xl overflow-auto max-h-[80vh]"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                            #{task.id} · {providerDisplayName(task.provider)}
+                            {task.model ? ` · ${getModelDisplayName(task.model)}` : ''}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">任务参数详情</p>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={onClose}
+                        className="shrink-0 ml-3"
+                    >
+                        <X className="h-5 w-5" />
+                    </Button>
+                </div>
+
+                {/* Params table */}
+                <div className="p-5">
+                    {entries.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">无额外参数</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {entries.map(([key, value]) => (
+                                <div key={key} className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">
+                                        {PARAM_LABELS[key] ?? key}
+                                    </span>
+                                    <span className="font-medium">
+                                        {formatParamValue(key, value)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* Prompt */}
+                <div className="px-5 pb-4 border-t border-border pt-3">
+                    <p className="text-xs text-muted-foreground mb-1">Prompt</p>
+                    <p className="text-sm leading-relaxed">{task.prompt}</p>
+                </div>
+            </div>
+        </div>
     );
 }
 
@@ -444,7 +587,7 @@ function VideoPreviewOverlay({
                     <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">
                             #{task.id} · {providerDisplayName(task.provider)}
-                            {task.model ? ` · ${task.model}` : ''}
+                            {task.model ? ` · ${getModelDisplayName(task.model)}` : ''}
                         </p>
                         <p className="text-xs text-muted-foreground truncate mt-0.5">
                             {task.prompt}

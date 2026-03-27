@@ -10,6 +10,7 @@ export interface Task {
     image_url: string | null;
     result_url: string | null;
     error_message: string | null;
+    extra_params: string | null;
     retry_count: number;
     created_at: string;
     updated_at: string;
@@ -21,6 +22,7 @@ export interface InsertTaskParams {
     prompt: string;
     model?: string;
     imageUrl?: string;
+    extraParams?: Record<string, unknown>;
 }
 
 export interface UpdateStatusExtras {
@@ -34,14 +36,15 @@ export interface UpdateStatusExtras {
 export function insertTask(params: InsertTaskParams): Task {
     const db = getDb();
     const stmt = db.prepare(`
-    INSERT INTO tasks (provider, prompt, model, image_url)
-    VALUES (@provider, @prompt, @model, @imageUrl)
+    INSERT INTO tasks (provider, prompt, model, image_url, extra_params)
+    VALUES (@provider, @prompt, @model, @imageUrl, @extraParams)
   `);
     const result = stmt.run({
         provider: params.provider,
         prompt: params.prompt,
         model: params.model ?? null,
         imageUrl: params.imageUrl ?? null,
+        extraParams: params.extraParams ? JSON.stringify(params.extraParams) : null,
     });
     const insertedId = Number(result.lastInsertRowid);
     const task = getTaskById(insertedId);

@@ -126,7 +126,7 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
 
     // 创建任务
     router.post('/tasks', async (req, res) => {
-        const { provider, prompt, model, imageUrl } = req.body;
+        const { provider, prompt, model, imageUrl, extra } = req.body;
 
         if (!provider || typeof provider !== 'string') {
             res.status(400).json({ error: '缺少必填参数 provider' });
@@ -141,7 +141,8 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
             return;
         }
 
-        const task = insertTask({ provider, prompt, model, imageUrl });
+        const extraParams = (extra && typeof extra === 'object') ? extra as Record<string, unknown> : undefined;
+        const task = insertTask({ provider, prompt, model, imageUrl, extraParams });
 
         try {
             const providerInstance = registry.get(provider)!;
@@ -149,6 +150,7 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
                 prompt,
                 model,
                 imageUrl,
+                extra: extraParams,
             });
             updateTaskStatus(task.id, 'pending', {
                 providerTaskId: result.providerTaskId,

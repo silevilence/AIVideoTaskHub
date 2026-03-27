@@ -6,6 +6,8 @@ export interface CreateTaskParams {
     prompt: string;
     model?: string;
     imageUrl?: string;
+    /** Provider 特定的额外参数 */
+    extra?: Record<string, unknown>;
 }
 
 /** 创建任务返回值 */

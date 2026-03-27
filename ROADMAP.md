@@ -4,15 +4,6 @@
 
 ## 🚧 开发中
 
-- [x] **[P2] 部署与容器化**
-    - [x] 编写 Dockerfile
-        - 使用 Node 基础镜像，分阶段构建
-    - [x] Compose 配置文件
-        - 映射前端端口
-        - 数据保存目录（包括数据库目录和视频保存目录）通过volumns映射出来
-    - [x] 完善文档
-    - 更新 `README.md` 的安装与部署说明
-
 ## ✅ 已完成
 
 - [x] **[P0] 项目初始化与基础架构**
@@ -88,3 +79,60 @@
     - [x] 设置界面的设置要在本地保存下来（后端保存数据库）
     - [x] 任务状态界面，列出所有任务的状态，已完成的可以预览和下载视频，视频下载到本地失败的要提示原因（查看任务异常）
     - [x] 提交任务页，不需要加载mock provider
+
+- [x] **[P2] 部署与容器化**
+    - [x] 编写 Dockerfile
+        - 使用 Node 基础镜像，分阶段构建
+    - [x] Compose 配置文件
+        - 映射前端端口
+        - 数据保存目录（包括数据库目录和视频保存目录）通过volumns映射出来
+    - [x] 完善文档
+    - 更新 `README.md` 的安装与部署说明
+
+- [x] **[P2]接入火山引擎 Seedance**
+    - [x] 创建任务
+        - [x] 根据不同模型支持不同的视频生成能力
+            - [x] 文生视频
+            - [x] 图生视频-首尾帧
+            - [x] 图生视频-首帧
+            - [x] 图生视频-参考图
+        - [x] 支持创建任务时输入不同的参数
+            - `model`：用户选择
+            - `content`：暂不需要支持样片参考功能
+            - `callback_url`, `service_tier`, `execution_expires_after`, `draft`, `frames`, `camera_fixed`：不需要支持
+            - `return_last_frame`：用户选择开关
+            - `generate_audio`：使用 Seedance 1.5 pro时，用户选择开关
+            - `resolution`：用户选择枚举，枚举值定义及默认值见文档
+            - `ratio`：用户选择枚举，枚举值定义及默认值见文档
+            - `duration`：2~12，默认5,int
+            - `seed`：[-1, 2^32-1]之间的整数，默认-1
+            - `watermark`：用户选择开关
+        - [x] 参考文档
+            - 官方文档参考：`https://www.volcengine.com/docs/82379/1520757?lang=zh`
+            - 本地缓存：`refs/volce/create-task.md`
+        - [x] 界面修改
+            - 任务状态查询界面，每个任务加上查看详细参数按钮，点击在弹窗中显示详细参数
+    - [x] 查询状态
+        - [x] 查询任务状态
+        - [x] 完成后下载视频
+        - [x] 尾帧图暂不下载
+        - [x] 参考文档
+            - 官方文档参考：`https://www.volcengine.com/docs/82379/1521309?lang=zh`
+            - 本地缓存：`refs/volce/task-status.md`
+    - [x] 支持模型
+        - [x] Seedance 1.5 pro
+            - id: `doubao-seedance-1-5-pro-251215`
+            - 支持能力：图生视频-首尾帧、图生视频-首帧、文生视频
+        - [x] Seedance 1.0 pro
+            - id: `doubao-seedance-1-0-pro-250528`
+            - 支持能力：图生视频-首尾帧、图生视频-首帧、文生视频
+        - [x] Seedance 1.0 pro fast
+            - id: `doubao-seedance-1-0-pro-fast-251015`
+            - 支持能力：图生视频-首帧、文生视频
+        - [x] Seedance 1.0 lite
+            - 文生视频
+                - id: `doubao-seedance-1-0-lite-t2v-250428`
+                - 支持能力：文生视频
+            - 图生视频
+                - id: `doubao-seedance-1-0-lite-i2v-250428`
+                - 支持能力：图生视频-参考图、图生视频-首尾帧、图生视频-首帧

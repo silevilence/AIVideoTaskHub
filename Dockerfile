@@ -1,12 +1,13 @@
 # ================================
 # Stage 1: Build frontend assets
 # ================================
-FROM docker.m.daocloud.io/library/node:22-alpine AS builder
+# FROM docker.m.daocloud.io/library/node:22-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
 # 【新增这一行】：将 Alpine 的默认软件源替换为阿里云镜像
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+# RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 # Install build tools for native modules (better-sqlite3)
 RUN apk add --no-cache python3 make g++
@@ -20,12 +21,13 @@ RUN npm run build
 # ================================
 # Stage 2: Production
 # ================================
-FROM docker.m.daocloud.io/library/node:22-alpine
+# FROM docker.m.daocloud.io/library/node:22-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 
 # 【新增这一行】：将 Alpine 的默认软件源替换为阿里云镜像
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+# RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 COPY package.json package-lock.json ./
 

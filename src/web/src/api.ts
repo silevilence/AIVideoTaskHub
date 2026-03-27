@@ -8,6 +8,7 @@ export interface Task {
     image_url: string | null;
     result_url: string | null;
     error_message: string | null;
+    extra_params: string | null;
     retry_count: number;
     created_at: string;
     updated_at: string;
@@ -102,6 +103,7 @@ export async function createTask(params: {
     prompt: string;
     model?: string;
     imageUrl?: string;
+    extra?: Record<string, unknown>;
 }): Promise<Task> {
     const res = await fetch(`${BASE}/tasks`, {
         method: 'POST',

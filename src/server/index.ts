@@ -4,6 +4,7 @@ import { getSetting } from './task-model.js';
 import { ProviderRegistry } from './provider-registry.js';
 import { MockProvider } from './providers/mock-provider.js';
 import { SiliconFlowProvider } from './providers/siliconflow-provider.js';
+import { VolcEngineProvider } from './providers/volcengine-provider.js';
 import { TaskPoller } from './task-poller.js';
 
 const PORT = process.env.PORT || 3000;
@@ -19,6 +20,11 @@ registry.register(
   new SiliconFlowProvider({
     apiKey: process.env.SILICONFLOW_API_KEY || '',
     defaultModel: process.env.SILICONFLOW_MODEL || undefined,
+  })
+);
+registry.register(
+  new VolcEngineProvider({
+    apiKey: process.env.VOLCENGINE_API_KEY || '',
   })
 );
 
