@@ -433,17 +433,15 @@ function TaskCard({
                         >
                             <Trash2 className="h-3.5 w-3.5" />
                         </Button>
-                        {task.extra_params && (
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => onShowParams(task)}
-                                className="text-muted-foreground"
-                                title="查看任务参数"
-                            >
-                                <Info className="h-3.5 w-3.5" />
-                            </Button>
-                        )}
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onShowParams(task)}
+                            className="text-muted-foreground"
+                            title="查看任务参数"
+                        >
+                            <Info className="h-3.5 w-3.5" />
+                        </Button>
                     </div>
                 </div>
             </CardContent>
@@ -524,31 +522,72 @@ function TaskParamsModal({
                     </Button>
                 </div>
 
-                {/* Params table */}
-                <div className="p-5">
-                    {entries.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">无额外参数</p>
-                    ) : (
-                        <div className="space-y-2">
-                            {entries.map(([key, value]) => (
-                                <div key={key} className="flex items-center justify-between text-sm">
-                                    <span className="text-muted-foreground">
-                                        {PARAM_LABELS[key] ?? key}
-                                    </span>
-                                    <span className="font-medium">
-                                        {formatParamValue(key, value)}
-                                    </span>
-                                </div>
-                            ))}
+                {/* 基础信息 */}
+                <div className="px-5 pt-4 space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">平台</span>
+                        <span className="font-medium">{providerDisplayName(task.provider)}</span>
+                    </div>
+                    {task.model && (
+                        <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">模型</span>
+                            <span className="font-medium">{getModelDisplayName(task.model)}</span>
+                        </div>
+                    )}
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">状态</span>
+                        <span className="font-medium">{STATUS_CONFIG[task.status]?.label ?? task.status}</span>
+                    </div>
+                    {task.image_url && (
+                        <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">首帧图片</span>
+                            <span className="font-medium">{task.image_url.startsWith('data:') ? '(本地上传)' : '(URL)'}</span>
+                        </div>
+                    )}
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">创建时间</span>
+                        <span className="font-medium">{new Date(task.created_at + 'Z').toLocaleString()}</span>
+                    </div>
+                    {task.provider_task_id && (
+                        <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">平台任务ID</span>
+                            <span className="font-medium text-xs font-mono truncate max-w-[200px]" title={task.provider_task_id}>
+                                {task.provider_task_id}
+                            </span>
                         </div>
                     )}
                 </div>
 
+                {/* 额外参数 */}
+                {entries.length > 0 && (
+                    <div className="px-5 pt-3 space-y-2">
+                        <p className="text-xs text-muted-foreground font-medium">生成参数</p>
+                        {entries.map(([key, value]) => (
+                            <div key={key} className="flex items-center justify-between text-sm">
+                                <span className="text-muted-foreground">
+                                    {PARAM_LABELS[key] ?? key}
+                                </span>
+                                <span className="font-medium">
+                                    {formatParamValue(key, value)}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
                 {/* Prompt */}
-                <div className="px-5 pb-4 border-t border-border pt-3">
+                <div className="px-5 py-4 border-t border-border mt-3">
                     <p className="text-xs text-muted-foreground mb-1">Prompt</p>
                     <p className="text-sm leading-relaxed">{task.prompt}</p>
                 </div>
+
+                {/* 错误信息 */}
+                {task.error_message && (
+                    <div className="px-5 pb-4">
+                        <p className="text-xs text-muted-foreground mb-1">错误信息</p>
+                        <p className="text-sm text-destructive">{task.error_message}</p>
+                    </div>
+                )}
             </div>
         </div>
     );

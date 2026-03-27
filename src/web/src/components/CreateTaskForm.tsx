@@ -141,29 +141,38 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const [volcLastFrameUrl, setVolcLastFrameUrl] = useState('');
     const [volcLastFramePreview, setVolcLastFramePreview] = useState('');
     const [uploadingLastFrame, setUploadingLastFrame] = useState(false);
-    const [volcImageMode, setVolcImageMode] = useState<'first_frame' | 'first_last_frame' | 'reference'>('first_frame');
+    const [volcImageMode, setVolcImageMode] = useState<'text_to_video' | 'first_frame' | 'first_last_frame' | 'reference'>('text_to_video');
     const [volcSeed, setVolcSeed] = useState('');
     const [volcCameraFixed, setVolcCameraFixed] = useState(false);
     const [volcWatermark, setVolcWatermark] = useState(false);
     const [volcServiceTier, setVolcServiceTier] = useState<'default' | 'flex'>('default');
     const [volcDraft, setVolcDraft] = useState(false);
     const [volcReturnLastFrame, setVolcReturnLastFrame] = useState(false);
+    // 参考图模式多图 (1-4张)
+    const [volcRefImages, setVolcRefImages] = useState<{ url: string; preview: string }[]>([]);
+    const [uploadingRefImage, setUploadingRefImage] = useState(false);
 
     const providers = Object.keys(providerModels).filter((p) => p !== 'mock');
     const models = provider ? (providerModels[provider] ?? []) : [];
     const isVolc = provider === 'volcengine';
     const caps = isVolc ? VOLC_MODEL_CAPS[model] : undefined;
 
-    // 是否显示首帧图片上传
+    // 是否显示首帧图片上传（火山引擎由 volcImageMode 控制）
     const showImageInput = useMemo(() => {
-        if (isVolc) return caps?.i2v ?? false;
+        if (isVolc) {
+            return volcImageMode === 'first_frame' || volcImageMode === 'first_last_frame';
+        }
         return isSiliconFlowI2V(model);
-    }, [isVolc, caps, model]);
+    }, [isVolc, volcImageMode, model]);
 
-    // 火山引擎可选的图生视频模式
+    // 是否显示参考图上传
+    const showRefImageInput = isVolc && volcImageMode === 'reference';
+
+    // 火山引擎可选的生成模式
     const volcImageModes = useMemo(() => {
         if (!caps) return [];
         const modes: { value: string; label: string }[] = [];
+        modes.push({ value: 'text_to_video', label: '文生视频' });
         if (caps.i2v) modes.push({ value: 'first_frame', label: '首帧图生视频' });
         if (caps.firstLastFrame) modes.push({ value: 'first_last_frame', label: '首尾帧图生视频' });
         if (caps.referenceImage) modes.push({ value: 'reference', label: '参考图生视频 (1-4张)' });
@@ -193,13 +202,14 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
         setVolcDuration('5');
         setVolcAutoDuration(false);
         setVolcGenerateAudio(true);
-        setVolcImageMode('first_frame');
+        setVolcImageMode('text_to_video');
         setVolcSeed('');
         setVolcCameraFixed(false);
         setVolcWatermark(false);
         setVolcServiceTier('default');
         setVolcDraft(false);
         setVolcReturnLastFrame(false);
+        setVolcRefImages([]);
     };
 
     const handleProviderChange = (name: string) => {
@@ -285,17 +295,14 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                 if (volcImageMode === 'first_last_frame' && volcLastFrameUrl.trim()) {
                     extra.lastFrameImageUrl = volcLastFrameUrl.trim();
                 }
-                // 参考图模式：将首帧 imageUrl 作为 referenceImageUrls 发送
-                // (简化实现：单图作为参考图)
-                if (volcImageMode === 'reference' && imageUrl.trim()) {
-                    extra.referenceImageUrls = [imageUrl.trim()];
+                // 参考图模式：使用多图
+                if (volcImageMode === 'reference' && volcRefImages.length > 0) {
+                    extra.referenceImageUrls = volcRefImages.map(img => img.url);
                 }
             }
 
             const submitImageUrl = (() => {
                 if (!showImageInput || !imageUrl.trim()) return undefined;
-                // 参考图模式下，imageUrl 通过 extra.referenceImageUrls 发送
-                if (isVolc && volcImageMode === 'reference') return undefined;
                 return imageUrl.trim();
             })();
 
@@ -377,10 +384,10 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                             </div>
                         </div>
 
-                        {/* 火山引擎：图生视频模式选择 */}
-                        {isVolc && caps?.i2v && volcImageModes.length > 1 && (
+                        {/* 火山引擎：生成模式选择 */}
+                        {isVolc && volcImageModes.length > 1 && (
                             <div className="space-y-2">
-                                <Label>图生视频模式</Label>
+                                <Label>生成模式</Label>
                                 <div className="flex flex-wrap gap-2">
                                     {volcImageModes.map((mode) => (
                                         <button
@@ -392,6 +399,7 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                                 setPreviewUrl('');
                                                 setVolcLastFrameUrl('');
                                                 setVolcLastFramePreview('');
+                                                setVolcRefImages([]);
                                             }}
                                             className={cn(
                                                 'inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer',
@@ -403,39 +411,16 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                             {mode.label}
                                         </button>
                                     ))}
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setVolcImageMode('first_frame');
-                                            setImageUrl('');
-                                            setPreviewUrl('');
-                                            setVolcLastFrameUrl('');
-                                            setVolcLastFramePreview('');
-                                        }}
-                                        className={cn(
-                                            'inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer',
-                                            !showImageInput || volcImageMode === 'first_frame'
-                                                ? ''
-                                                : 'bg-muted text-muted-foreground border-transparent hover:bg-muted/80',
-                                            'hidden',
-                                        )}
-                                    />
                                 </div>
                             </div>
                         )}
 
-                        {/* 首帧/参考图 上传 */}
+                        {/* 首帧图片上传 */}
                         {showImageInput && (
                             <div className="space-y-2">
                                 <Label>
-                                    {isVolc && volcImageMode === 'reference'
-                                        ? '参考图片'
-                                        : '首帧图片'}{' '}
-                                    <span className="text-muted-foreground">
-                                        {isVolc && volcImageMode === 'reference'
-                                            ? '(参考图模式)'
-                                            : '(图生视频)'}
-                                    </span>
+                                    首帧图片{' '}
+                                    <span className="text-muted-foreground">(图生视频)</span>
                                 </Label>
                                 <div className="flex gap-2 items-center">
                                     <Input
@@ -556,6 +541,80 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                         </Button>
                                     </div>
                                 )}
+                            </div>
+                        )}
+
+                        {/* 火山引擎：参考图上传 (1-4张) */}
+                        {showRefImageInput && (
+                            <div className="space-y-2">
+                                <Label>
+                                    参考图片{' '}
+                                    <span className="text-muted-foreground">
+                                        ({volcRefImages.length}/4 张)
+                                    </span>
+                                </Label>
+                                {/* 已上传的图片网格 */}
+                                {volcRefImages.length > 0 && (
+                                    <div className="flex flex-wrap gap-3">
+                                        {volcRefImages.map((img, idx) => (
+                                            <div key={idx} className="relative group">
+                                                <img
+                                                    src={img.preview || img.url}
+                                                    alt={`参考图 ${idx + 1}`}
+                                                    className="h-20 w-20 rounded-lg border border-border object-cover"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVolcRefImages(prev => prev.filter((_, i) => i !== idx))}
+                                                    className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                                <span className="absolute bottom-0.5 left-0.5 text-[10px] bg-background/80 rounded px-1">
+                                                    [图{idx + 1}]
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {/* 添加按钮 */}
+                                {volcRefImages.length < 4 && (
+                                    <label
+                                        className={cn(
+                                            'inline-flex items-center justify-center h-10 px-4 text-sm rounded-md border border-dashed border-input',
+                                            'bg-transparent cursor-pointer transition-colors duration-200',
+                                            'hover:bg-accent hover:text-accent-foreground',
+                                            uploadingRefImage && 'opacity-50 pointer-events-none',
+                                        )}
+                                    >
+                                        <Upload className="h-4 w-4 mr-1.5" />
+                                        {uploadingRefImage ? '上传中...' : '添加参考图'}
+                                        <input
+                                            type="file"
+                                            accept="image/png,image/jpeg,image/gif,image/webp"
+                                            onChange={async (e) => {
+                                                const file = e.target.files?.[0];
+                                                if (!file) return;
+                                                setUploadingRefImage(true);
+                                                setError('');
+                                                try {
+                                                    const result = await uploadImage(file);
+                                                    setVolcRefImages(prev => [...prev, { url: result.base64, preview: result.url }]);
+                                                } catch (err) {
+                                                    setError((err as Error).message);
+                                                } finally {
+                                                    setUploadingRefImage(false);
+                                                    e.target.value = '';
+                                                }
+                                            }}
+                                            disabled={uploadingRefImage}
+                                            className="hidden"
+                                        />
+                                    </label>
+                                )}
+                                <p className="text-xs text-muted-foreground">
+                                    提示词中可用 [图1]、[图2] 等指定图片，如："[图1]的人物走在[图2]的街道上"
+                                </p>
                             </div>
                         )}
 
