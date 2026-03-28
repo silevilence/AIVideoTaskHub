@@ -74,6 +74,15 @@ describe('MockProvider', () => {
             ).resolves.toBeUndefined();
         });
     });
+
+    describe('getModelsInfo', () => {
+        it('应返回与 models 一致的模型信息', () => {
+            const infos = provider.getModelsInfo();
+            expect(infos).toHaveLength(1);
+            expect(infos[0].id).toBe('mock-model');
+            expect(infos[0].displayName).toBe('mock-model');
+        });
+    });
 });
 
 describe('MockProvider 失败模式', () => {

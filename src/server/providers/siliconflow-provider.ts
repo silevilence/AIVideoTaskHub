@@ -8,6 +8,7 @@ import type {
     TaskStatusResult,
     TaskStatus,
     ProviderSettingSchema,
+    ModelInfo,
 } from '../provider.js';
 
 const BASE_URL = 'https://api.siliconflow.cn/v1/video';
@@ -44,6 +45,45 @@ export class SiliconFlowProvider implements VideoProvider {
         this.apiKey = options.apiKey;
         this.defaultModel = options.defaultModel ?? 'Wan-AI/Wan2.2-T2V-A14B';
         this.defaultImageSize = options.defaultImageSize ?? '1280x720';
+    }
+
+    private static readonly MODEL_INFOS: ModelInfo[] = [
+        {
+            id: 'Wan-AI/Wan2.2-T2V-A14B',
+            displayName: 'Wan2.2 文生视频',
+            capabilities: {
+                i2v: false,
+                firstLastFrame: false,
+                referenceImage: false,
+                audio: false,
+                cameraFixed: false,
+                draft: false,
+                resolutions: [],
+                durationRange: [0, 0],
+                autoDuration: false,
+                defaultResolution: '',
+            },
+        },
+        {
+            id: 'Wan-AI/Wan2.2-I2V-A14B',
+            displayName: 'Wan2.2 图生视频',
+            capabilities: {
+                i2v: true,
+                firstLastFrame: false,
+                referenceImage: false,
+                audio: false,
+                cameraFixed: false,
+                draft: false,
+                resolutions: [],
+                durationRange: [0, 0],
+                autoDuration: false,
+                defaultResolution: '',
+            },
+        },
+    ];
+
+    getModelsInfo(): ModelInfo[] {
+        return SiliconFlowProvider.MODEL_INFOS;
     }
 
     getSettingsSchema(): ProviderSettingSchema[] {

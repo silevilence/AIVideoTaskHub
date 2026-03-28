@@ -16,6 +16,7 @@ function createMockProvider(name = 'mock', models = ['model-a']): VideoProvider 
         getStatus: vi.fn().mockResolvedValue({ status: 'pending' }),
         downloadVideo: vi.fn().mockResolvedValue(undefined),
         getSettingsSchema: vi.fn().mockReturnValue([]),
+        getModelsInfo: vi.fn().mockReturnValue(models.map((id) => ({ id, displayName: id }))),
         applySettings: vi.fn(),
         getCurrentSettings: vi.fn().mockReturnValue({}),
     };
@@ -254,17 +255,20 @@ describe('任务路由 API', () => {
     });
 
     describe('GET /api/providers/models', () => {
-        it('应返回每个 provider 的模型列表', async () => {
+        it('应返回每个 provider 的模型信息列表', async () => {
             const res = await request(app).get('/api/providers/models');
             expect(res.status).toBe(200);
             expect(res.body).toHaveProperty('mock');
-            expect(res.body.mock).toEqual(['model-a']);
+            expect(res.body.mock).toEqual([{ id: 'model-a', displayName: 'model-a' }]);
         });
 
-        it('多个 provider 应各自返回模型', async () => {
+        it('多个 provider 应各自返回模型信息', async () => {
             registry.register(createMockProvider('sf', ['m1', 'm2']));
             const res = await request(app).get('/api/providers/models');
-            expect(res.body.sf).toEqual(['m1', 'm2']);
+            expect(res.body.sf).toEqual([
+                { id: 'm1', displayName: 'm1' },
+                { id: 'm2', displayName: 'm2' },
+            ]);
         });
     });
 

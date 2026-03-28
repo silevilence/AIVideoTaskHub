@@ -26,13 +26,13 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
         res.json(list);
     });
 
-    // 获取每个 provider 的模型列表
+    // 获取每个 provider 的模型列表（含详细信息）
     router.get('/providers/models', (_req, res) => {
-        const result: Record<string, string[]> = {};
+        const result: Record<string, ReturnType<NonNullable<ReturnType<typeof registry.get>>['getModelsInfo']>> = {};
         for (const name of registry.listNames()) {
             const provider = registry.get(name);
             if (provider) {
-                result[name] = provider.models;
+                result[name] = provider.getModelsInfo();
             }
         }
         res.json(result);

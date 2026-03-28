@@ -22,6 +22,7 @@ function createStubProvider(
         getStatus: overrides.getStatus ?? vi.fn().mockResolvedValue({ status: 'running' }),
         downloadVideo: overrides.downloadVideo ?? vi.fn().mockResolvedValue(undefined),
         getSettingsSchema: vi.fn().mockReturnValue([]),
+        getModelsInfo: vi.fn().mockReturnValue([{ id: 'stub-model', displayName: 'stub-model' }]),
         applySettings: vi.fn(),
         getCurrentSettings: vi.fn().mockReturnValue({}),
     };

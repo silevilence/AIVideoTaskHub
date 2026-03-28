@@ -423,4 +423,59 @@ describe('VolcEngineProvider', () => {
             ).rejects.toThrow();
         });
     });
+
+    describe('getModelsInfo', () => {
+        it('应返回所有模型的详细信息', () => {
+            const infos = provider.getModelsInfo();
+            expect(infos).toHaveLength(provider.models.length);
+            for (const info of infos) {
+                expect(info.id).toBeTruthy();
+                expect(info.displayName).toBeTruthy();
+                expect(provider.models).toContain(info.id);
+            }
+        });
+
+        it('每个模型应包含 capabilities', () => {
+            const infos = provider.getModelsInfo();
+            for (const info of infos) {
+                expect(info.capabilities).toBeDefined();
+                const caps = info.capabilities!;
+                expect(typeof caps.i2v).toBe('boolean');
+                expect(typeof caps.firstLastFrame).toBe('boolean');
+                expect(typeof caps.referenceImage).toBe('boolean');
+                expect(typeof caps.audio).toBe('boolean');
+                expect(Array.isArray(caps.resolutions)).toBe(true);
+                expect(caps.resolutions.length).toBeGreaterThan(0);
+                expect(caps.durationRange).toHaveLength(2);
+                expect(typeof caps.defaultResolution).toBe('string');
+            }
+        });
+
+        it('每个模型应包含 ratios 列表', () => {
+            const infos = provider.getModelsInfo();
+            for (const info of infos) {
+                expect(info.capabilities!.ratios).toBeDefined();
+                expect(info.capabilities!.ratios!.length).toBeGreaterThan(0);
+                expect(info.capabilities!.ratios).toContain('16:9');
+            }
+        });
+
+        it('Seedance 1.5 Pro 应支持音频和自动时长', () => {
+            const infos = provider.getModelsInfo();
+            const pro15 = infos.find((m) => m.id === 'doubao-seedance-1-5-pro-251215');
+            expect(pro15).toBeDefined();
+            expect(pro15!.displayName).toBe('Seedance 1.5 Pro');
+            expect(pro15!.capabilities!.audio).toBe(true);
+            expect(pro15!.capabilities!.autoDuration).toBe(true);
+            expect(pro15!.capabilities!.draft).toBe(true);
+        });
+
+        it('Seedance 1.0 Lite I2V 应支持参考图', () => {
+            const infos = provider.getModelsInfo();
+            const liteI2v = infos.find((m) => m.id === 'doubao-seedance-1-0-lite-i2v-250428');
+            expect(liteI2v).toBeDefined();
+            expect(liteI2v!.capabilities!.referenceImage).toBe(true);
+            expect(liteI2v!.capabilities!.i2v).toBe(true);
+        });
+    });
 });

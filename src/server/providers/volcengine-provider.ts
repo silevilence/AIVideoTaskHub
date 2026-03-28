@@ -8,6 +8,7 @@ import type {
     TaskStatusResult,
     TaskStatus,
     ProviderSettingSchema,
+    ModelInfo,
 } from '../provider.js';
 
 const BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
@@ -41,6 +42,100 @@ export class VolcEngineProvider implements VideoProvider {
 
     constructor(options: VolcEngineProviderOptions) {
         this.apiKey = options.apiKey;
+    }
+
+    private static readonly RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive'];
+
+    private static readonly MODEL_INFOS: ModelInfo[] = [
+        {
+            id: 'doubao-seedance-1-5-pro-251215',
+            displayName: 'Seedance 1.5 Pro',
+            capabilities: {
+                i2v: true,
+                firstLastFrame: true,
+                referenceImage: false,
+                audio: true,
+                cameraFixed: true,
+                draft: true,
+                resolutions: ['480p', '720p', '1080p'],
+                durationRange: [4, 12],
+                autoDuration: true,
+                defaultResolution: '720p',
+                ratios: VolcEngineProvider.RATIOS,
+            },
+        },
+        {
+            id: 'doubao-seedance-1-0-pro-250528',
+            displayName: 'Seedance 1.0 Pro',
+            capabilities: {
+                i2v: true,
+                firstLastFrame: true,
+                referenceImage: false,
+                audio: false,
+                cameraFixed: true,
+                draft: false,
+                resolutions: ['480p', '720p', '1080p'],
+                durationRange: [2, 12],
+                autoDuration: false,
+                defaultResolution: '1080p',
+                ratios: VolcEngineProvider.RATIOS,
+            },
+        },
+        {
+            id: 'doubao-seedance-1-0-pro-fast-251015',
+            displayName: 'Seedance 1.0 Pro Fast',
+            capabilities: {
+                i2v: true,
+                firstLastFrame: false,
+                referenceImage: false,
+                audio: false,
+                cameraFixed: true,
+                draft: false,
+                resolutions: ['480p', '720p', '1080p'],
+                durationRange: [2, 12],
+                autoDuration: false,
+                defaultResolution: '1080p',
+                ratios: VolcEngineProvider.RATIOS,
+            },
+        },
+        {
+            id: 'doubao-seedance-1-0-lite-t2v-250428',
+            displayName: 'Seedance 1.0 Lite (文生视频)',
+            capabilities: {
+                i2v: false,
+                firstLastFrame: false,
+                referenceImage: false,
+                audio: false,
+                cameraFixed: true,
+                draft: false,
+                resolutions: ['480p', '720p'],
+                durationRange: [2, 12],
+                autoDuration: false,
+                defaultResolution: '720p',
+                ratios: VolcEngineProvider.RATIOS,
+            },
+        },
+        {
+            id: 'doubao-seedance-1-0-lite-i2v-250428',
+            displayName: 'Seedance 1.0 Lite (图生视频)',
+            capabilities: {
+                i2v: true,
+                firstLastFrame: true,
+                referenceImage: true,
+                audio: false,
+                cameraFixed: false,
+                draft: false,
+                resolutions: ['480p', '720p'],
+                durationRange: [2, 12],
+                autoDuration: false,
+                defaultResolution: '720p',
+                ratios: VolcEngineProvider.RATIOS,
+            },
+        },
+    ];
+
+    getModelsInfo(): ModelInfo[] {
+        return VolcEngineProvider.MODEL_INFOS;
     }
 
     getSettingsSchema(): ProviderSettingSchema[] {

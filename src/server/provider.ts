@@ -24,6 +24,42 @@ export interface TaskStatusResult {
     errorMessage?: string;
 }
 
+/** 模型能力声明（前端根据此元数据动态渲染设置界面） */
+export interface ModelCapabilities {
+    /** 支持图生视频（首帧） */
+    i2v: boolean;
+    /** 支持首尾帧 */
+    firstLastFrame: boolean;
+    /** 支持参考图 */
+    referenceImage: boolean;
+    /** 支持生成音频 */
+    audio: boolean;
+    /** 支持固定镜头 */
+    cameraFixed: boolean;
+    /** 支持样片模式 */
+    draft: boolean;
+    /** 支持的分辨率 */
+    resolutions: string[];
+    /** 支持的时长范围 [min, max] */
+    durationRange: [number, number];
+    /** 支持自动时长 (-1) */
+    autoDuration: boolean;
+    /** 默认分辨率 */
+    defaultResolution: string;
+    /** 支持的宽高比列表 */
+    ratios?: string[];
+}
+
+/** 模型信息（包含 displayName 和能力声明） */
+export interface ModelInfo {
+    /** 模型 ID（唯一标识） */
+    id: string;
+    /** 模型显示名称 */
+    displayName: string;
+    /** 模型能力声明（可选，无则为纯文本生成） */
+    capabilities?: ModelCapabilities;
+}
+
 /** Provider 设置项声明 */
 export interface ProviderSettingSchema {
     /** 设置项 key（唯一） */
@@ -50,6 +86,9 @@ export interface VideoProvider {
 
     /** 可用模型列表 */
     readonly models: string[];
+
+    /** 返回所有模型的详细信息（包含 displayName 和能力声明） */
+    getModelsInfo(): ModelInfo[];
 
     /** 返回此 Provider 需要的设置项声明 */
     getSettingsSchema(): ProviderSettingSchema[];

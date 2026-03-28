@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchProviderModels, fetchProviders, createTask, uploadImage, fetchSettings } from '../api';
-import type { ProviderInfo, ProviderSettings } from '../api';
+import type { ProviderInfo, ProviderSettings, ModelInfo, ModelCapabilities } from '../api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
@@ -16,119 +16,8 @@ const PROVIDER_ICONS: Record<string, string> = {
     volcengine: volcengineIcon,
 };
 
-// ── 模型显示名称 ────────────────────────────────────
-const MODEL_DISPLAY_NAMES: Record<string, string> = {
-    // 火山引擎
-    'doubao-seedance-1-5-pro-251215': 'Seedance 1.5 Pro',
-    'doubao-seedance-1-0-pro-250528': 'Seedance 1.0 Pro',
-    'doubao-seedance-1-0-pro-fast-251015': 'Seedance 1.0 Pro Fast',
-    'doubao-seedance-1-0-lite-t2v-250428': 'Seedance 1.0 Lite (文生视频)',
-    'doubao-seedance-1-0-lite-i2v-250428': 'Seedance 1.0 Lite (图生视频)',
-    // SiliconFlow
-    'Wan-AI/Wan2.2-T2V-A14B': 'Wan2.2 文生视频',
-    'Wan-AI/Wan2.2-I2V-A14B': 'Wan2.2 图生视频',
-};
-
-function getModelDisplayName(modelId: string): string {
-    return MODEL_DISPLAY_NAMES[modelId] ?? modelId;
-}
-
-// ── 火山引擎模型能力矩阵 ────────────────────────────
-interface VolcModelCapabilities {
-    /** 支持图生视频（首帧） */
-    i2v: boolean;
-    /** 支持首尾帧 */
-    firstLastFrame: boolean;
-    /** 支持参考图 */
-    referenceImage: boolean;
-    /** 支持生成音频 */
-    audio: boolean;
-    /** 支持固定镜头 */
-    cameraFixed: boolean;
-    /** 支持样片模式 */
-    draft: boolean;
-    /** 支持的分辨率 */
-    resolutions: string[];
-    /** 支持的时长范围 [min, max]，-1 表示支持自动 */
-    durationRange: [number, number];
-    /** 支持自动时长 (-1) */
-    autoDuration: boolean;
-    /** 默认分辨率 */
-    defaultResolution: string;
-}
-
-const VOLC_MODEL_CAPS: Record<string, VolcModelCapabilities> = {
-    'doubao-seedance-1-5-pro-251215': {
-        i2v: true,
-        firstLastFrame: true,
-        referenceImage: false,
-        audio: true,
-        cameraFixed: true,
-        draft: true,
-        resolutions: ['480p', '720p', '1080p'],
-        durationRange: [4, 12],
-        autoDuration: true,
-        defaultResolution: '720p',
-    },
-    'doubao-seedance-1-0-pro-250528': {
-        i2v: true,
-        firstLastFrame: true,
-        referenceImage: false,
-        audio: false,
-        cameraFixed: true,
-        draft: false,
-        resolutions: ['480p', '720p', '1080p'],
-        durationRange: [2, 12],
-        autoDuration: false,
-        defaultResolution: '1080p',
-    },
-    'doubao-seedance-1-0-pro-fast-251015': {
-        i2v: true,
-        firstLastFrame: false,
-        referenceImage: false,
-        audio: false,
-        cameraFixed: true,
-        draft: false,
-        resolutions: ['480p', '720p', '1080p'],
-        durationRange: [2, 12],
-        autoDuration: false,
-        defaultResolution: '1080p',
-    },
-    'doubao-seedance-1-0-lite-t2v-250428': {
-        i2v: false,
-        firstLastFrame: false,
-        referenceImage: false,
-        audio: false,
-        cameraFixed: true,
-        draft: false,
-        resolutions: ['480p', '720p'],
-        durationRange: [2, 12],
-        autoDuration: false,
-        defaultResolution: '720p',
-    },
-    'doubao-seedance-1-0-lite-i2v-250428': {
-        i2v: true,
-        firstLastFrame: true,
-        referenceImage: true,
-        audio: false,
-        cameraFixed: false,
-        draft: false,
-        resolutions: ['480p', '720p'],
-        durationRange: [2, 12],
-        autoDuration: false,
-        defaultResolution: '720p',
-    },
-};
-
-const VOLC_RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive'];
-
-// 非火山引擎的图生视频模型判断
-function isSiliconFlowI2V(model: string): boolean {
-    return /I2V/i.test(model);
-}
-
 export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
-    const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
+    const [providerModels, setProviderModels] = useState<Record<string, ModelInfo[]>>({});
     const [providerInfos, setProviderInfos] = useState<ProviderInfo[]>([]);
     const [provider, setProvider] = useState('');
     const [prompt, setPrompt] = useState('');
@@ -164,23 +53,26 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const [uploadingRefImage, setUploadingRefImage] = useState(false);
 
     const providers = Object.keys(providerModels).filter((p) => p !== 'mock');
-    const models = provider ? (providerModels[provider] ?? []) : [];
-    const isVolc = provider === 'volcengine';
-    const caps = isVolc ? VOLC_MODEL_CAPS[model] : undefined;
+    const models: ModelInfo[] = provider ? (providerModels[provider] ?? []) : [];
+    const currentModelInfo = models.find((m) => m.id === model);
+    const caps: ModelCapabilities | undefined = currentModelInfo?.capabilities;
 
-    // 是否显示首帧图片上传（火山引擎由 volcImageMode 控制）
+    // 当前模型是否有高级能力（有 capabilities 且有实际功能）
+    const hasAdvancedCaps = !!(caps && (caps.resolutions.length > 0 || caps.ratios));
+
+    // 是否显示首帧图片上传（由 capabilities 和 volcImageMode 控制）
     const showImageInput = useMemo(() => {
-        if (isVolc) {
+        if (hasAdvancedCaps) {
             return volcImageMode === 'first_frame' || volcImageMode === 'first_last_frame';
         }
-        return isSiliconFlowI2V(model);
-    }, [isVolc, volcImageMode, model]);
+        return caps?.i2v ?? false;
+    }, [hasAdvancedCaps, volcImageMode, caps]);
 
     // 是否显示参考图上传
-    const showRefImageInput = isVolc && volcImageMode === 'reference';
+    const showRefImageInput = hasAdvancedCaps && volcImageMode === 'reference';
 
-    // 火山引擎可选的生成模式
-    const volcImageModes = useMemo(() => {
+    // 可选的生成模式
+    const imageModes = useMemo(() => {
         if (!caps) return [];
         const modes: { value: string; label: string }[] = [];
         modes.push({ value: 'text_to_video', label: '文生视频' });
@@ -199,7 +91,7 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                 const names = Object.keys(data).filter((p) => p !== 'mock');
                 if (names.length > 0 && !provider) {
                     setProvider(names[0]);
-                    if (data[names[0]].length > 0) setModel(data[names[0]][0]);
+                    if (data[names[0]].length > 0) setModel(data[names[0]][0].id);
                 }
             })
             .catch(() => setError('获取 Provider 列表失败'));
@@ -256,22 +148,24 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const handleProviderChange = (name: string) => {
         setProvider(name);
         const m = providerModels[name] ?? [];
-        const firstModel = m.length > 0 ? m[0] : '';
+        const firstModel = m.length > 0 ? m[0].id : '';
         setModel(firstModel);
         resetVolcState();
         // 设置默认分辨率
-        if (name === 'volcengine' && firstModel) {
-            const c = VOLC_MODEL_CAPS[firstModel];
-            if (c) setVolcResolution(c.defaultResolution);
+        if (firstModel) {
+            const info = m.find((mi) => mi.id === firstModel);
+            if (info?.capabilities?.defaultResolution) {
+                setVolcResolution(info.capabilities.defaultResolution);
+            }
         }
     };
 
-    const handleModelChange = (m: string) => {
-        setModel(m);
+    const handleModelChange = (modelId: string) => {
+        setModel(modelId);
         resetVolcState();
-        if (isVolc) {
-            const c = VOLC_MODEL_CAPS[m];
-            if (c) setVolcResolution(c.defaultResolution);
+        const info = models.find((mi) => mi.id === modelId);
+        if (info?.capabilities?.defaultResolution) {
+            setVolcResolution(info.capabilities.defaultResolution);
         }
     };
 
@@ -315,8 +209,8 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
         setError('');
         try {
             const extra: Record<string, unknown> = {};
-            if (isVolc && caps) {
-                extra.ratio = volcRatio;
+            if (hasAdvancedCaps && caps) {
+                if (caps.ratios) extra.ratio = volcRatio;
                 extra.resolution = volcResolution;
                 if (volcAutoDuration && caps.autoDuration) {
                     extra.duration = -1;
@@ -352,7 +246,7 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                 prompt: prompt.trim(),
                 model: model.trim() || undefined,
                 imageUrl: submitImageUrl,
-                extra: isVolc ? extra : undefined,
+                extra: hasAdvancedCaps ? extra : undefined,
             });
             setPrompt('');
             resetVolcState();
@@ -442,20 +336,20 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                     className={selectClass}
                                 >
                                     {models.map((m) => (
-                                        <option key={m} value={m}>
-                                            {getModelDisplayName(m)}
+                                        <option key={m.id} value={m.id}>
+                                            {m.displayName}
                                         </option>
                                     ))}
                                 </select>
                             </div>
                         </div>
 
-                        {/* 火山引擎：生成模式选择 */}
-                        {isVolc && volcImageModes.length > 1 && (
+                        {/* 生成模式选择 */}
+                        {hasAdvancedCaps && imageModes.length > 1 && (
                             <div className="space-y-2">
                                 <Label>生成模式</Label>
                                 <div className="flex flex-wrap gap-2">
-                                    {volcImageModes.map((mode) => (
+                                    {imageModes.map((mode) => (
                                         <button
                                             key={mode.value}
                                             type="button"
@@ -547,8 +441,8 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                             </div>
                         )}
 
-                        {/* 火山引擎：尾帧图片 (首尾帧模式) */}
-                        {isVolc && volcImageMode === 'first_last_frame' && caps?.firstLastFrame && (
+                        {/* 尾帧图片 (首尾帧模式) */}
+                        {volcImageMode === 'first_last_frame' && caps?.firstLastFrame && (
                             <div className="space-y-2">
                                 <Label>
                                     尾帧图片{' '}
@@ -684,12 +578,13 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                             </div>
                         )}
 
-                        {/* 火山引擎：视频参数 */}
-                        {isVolc && caps && (
+                        {/* 视频参数 */}
+                        {hasAdvancedCaps && caps && (
                             <div className="space-y-3">
                                 <Label className="text-muted-foreground text-xs">视频参数</Label>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                     {/* 宽高比 */}
+                                    {caps.ratios && caps.ratios.length > 0 && (
                                     <div className="space-y-1.5">
                                         <Label htmlFor="volc-ratio">宽高比</Label>
                                         <select
@@ -698,11 +593,12 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                             onChange={(e) => setVolcRatio(e.target.value)}
                                             className={selectClass}
                                         >
-                                            {VOLC_RATIOS.map((r) => (
+                                            {caps.ratios.map((r) => (
                                                 <option key={r} value={r}>{r}</option>
                                             ))}
                                         </select>
                                     </div>
+                                    )}
                                     {/* 分辨率 */}
                                     <div className="space-y-1.5">
                                         <Label htmlFor="volc-resolution">分辨率</Label>

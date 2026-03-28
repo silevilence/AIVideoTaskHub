@@ -49,7 +49,27 @@ export async function fetchProviders(): Promise<ProviderInfo[]> {
     return res.json();
 }
 
-export async function fetchProviderModels(): Promise<Record<string, string[]>> {
+export interface ModelCapabilities {
+    i2v: boolean;
+    firstLastFrame: boolean;
+    referenceImage: boolean;
+    audio: boolean;
+    cameraFixed: boolean;
+    draft: boolean;
+    resolutions: string[];
+    durationRange: [number, number];
+    autoDuration: boolean;
+    defaultResolution: string;
+    ratios?: string[];
+}
+
+export interface ModelInfo {
+    id: string;
+    displayName: string;
+    capabilities?: ModelCapabilities;
+}
+
+export async function fetchProviderModels(): Promise<Record<string, ModelInfo[]>> {
     const res = await fetch(`${BASE}/providers/models`);
     if (!res.ok) throw new Error('获取模型列表失败');
     return res.json();

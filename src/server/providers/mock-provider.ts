@@ -5,6 +5,7 @@ import type {
     CreateTaskResult,
     TaskStatusResult,
     ProviderSettingSchema,
+    ModelInfo,
 } from '../provider.js';
 
 export interface MockProviderOptions {
@@ -36,6 +37,10 @@ export class MockProvider implements VideoProvider {
 
     getSettingsSchema(): ProviderSettingSchema[] {
         return [];
+    }
+
+    getModelsInfo(): ModelInfo[] {
+        return this.models.map((id) => ({ id, displayName: id }));
     }
 
     applySettings(_settings: Record<string, string>): void {

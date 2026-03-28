@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Task, TaskFilter, ProviderInfo } from '../api';
-import { fetchTasks, fetchProviders, retryTask, deleteTask } from '../api';
+import { fetchTasks, fetchProviders, fetchProviderModels, retryTask, deleteTask } from '../api';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent } from './ui/card';
@@ -37,27 +37,13 @@ const STATUS_CONFIG: Record<
     failed: { label: '失败', variant: 'destructive', icon: XCircle },
 };
 
-const MODEL_DISPLAY_NAMES: Record<string, string> = {
-    'doubao-seedance-1-5-pro-251215': 'Seedance 1.5 Pro',
-    'doubao-seedance-1-0-pro-250528': 'Seedance 1.0 Pro',
-    'doubao-seedance-1-0-pro-fast-251015': 'Seedance 1.0 Pro Fast',
-    'doubao-seedance-1-0-lite-t2v-250428': 'Seedance 1.0 Lite (T2V)',
-    'doubao-seedance-1-0-lite-i2v-250428': 'Seedance 1.0 Lite (I2V)',
-    'Wan-AI/Wan2.2-T2V-A14B': 'Wan2.2 T2V',
-    'Wan-AI/Wan2.2-I2V-A14B': 'Wan2.2 I2V',
-};
-
-function getModelDisplayName(modelId: string | null): string | null {
-    if (!modelId) return null;
-    return MODEL_DISPLAY_NAMES[modelId] ?? modelId;
-}
-
 const ALL_STATUSES = ['pending', 'running', 'success', 'failed'];
 
 export function TaskList({ refreshKey }: { refreshKey: number }) {
     const [tasks, setTasks] = useState<Task[]>([]);
     const [loading, setLoading] = useState(true);
     const [providers, setProviders] = useState<ProviderInfo[]>([]);
+    const [modelDisplayNames, setModelDisplayNames] = useState<Record<string, string>>({});
     const [previewTask, setPreviewTask] = useState<Task | null>(null);
     const [paramsTask, setParamsTask] = useState<Task | null>(null);
 
@@ -101,6 +87,15 @@ export function TaskList({ refreshKey }: { refreshKey: number }) {
 
     useEffect(() => {
         fetchProviders().then((p) => setProviders(p)).catch(() => {});
+        fetchProviderModels().then((data) => {
+            const names: Record<string, string> = {};
+            for (const models of Object.values(data)) {
+                for (const m of models) {
+                    names[m.id] = m.displayName;
+                }
+            }
+            setModelDisplayNames(names);
+        }).catch(() => {});
     }, []);
 
     useEffect(() => {
@@ -311,6 +306,7 @@ export function TaskList({ refreshKey }: { refreshKey: number }) {
                             onPreview={setPreviewTask}
                             onShowParams={setParamsTask}
                             providerDisplayName={providerDisplayName}
+                            modelDisplayNames={modelDisplayNames}
                         />
                     ))}
                 </div>
@@ -322,6 +318,7 @@ export function TaskList({ refreshKey }: { refreshKey: number }) {
                     task={previewTask}
                     onClose={() => setPreviewTask(null)}
                     providerDisplayName={providerDisplayName}
+                    modelDisplayNames={modelDisplayNames}
                 />
             )}
 
@@ -331,6 +328,7 @@ export function TaskList({ refreshKey }: { refreshKey: number }) {
                     task={paramsTask}
                     onClose={() => setParamsTask(null)}
                     providerDisplayName={providerDisplayName}
+                    modelDisplayNames={modelDisplayNames}
                 />
             )}
         </div>
@@ -344,6 +342,7 @@ function TaskCard({
     onPreview,
     onShowParams,
     providerDisplayName,
+    modelDisplayNames,
 }: {
     task: Task;
     onRetry: (id: number) => void;
@@ -351,6 +350,7 @@ function TaskCard({
     onPreview: (task: Task) => void;
     onShowParams: (task: Task) => void;
     providerDisplayName: (name: string) => string;
+    modelDisplayNames: Record<string, string>;
 }) {
     const config = STATUS_CONFIG[task.status] ?? {
         label: task.status,
@@ -373,7 +373,7 @@ function TaskCard({
                             </Badge>
                             <span className="text-xs text-muted-foreground">
                                 {providerDisplayName(task.provider)}
-                                {task.model ? ` · ${getModelDisplayName(task.model)}` : ''}
+                                {task.model ? ` · ${modelDisplayNames[task.model] ?? task.model}` : ''}
                             </span>
                             <span className="text-xs text-muted-foreground/50">
                                 #{task.id}
@@ -479,10 +479,12 @@ function TaskParamsModal({
     task,
     onClose,
     providerDisplayName,
+    modelDisplayNames,
 }: {
     task: Task;
     onClose: () => void;
     providerDisplayName: (name: string) => string;
+    modelDisplayNames: Record<string, string>;
 }) {
     const params: Record<string, unknown> = (() => {
         try {
@@ -508,7 +510,7 @@ function TaskParamsModal({
                     <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">
                             #{task.id} · {providerDisplayName(task.provider)}
-                            {task.model ? ` · ${getModelDisplayName(task.model)}` : ''}
+                            {task.model ? ` · ${modelDisplayNames[task.model] ?? task.model}` : ''}
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">任务参数详情</p>
                     </div>
@@ -531,7 +533,7 @@ function TaskParamsModal({
                     {task.model && (
                         <div className="flex items-center justify-between text-sm">
                             <span className="text-muted-foreground">模型</span>
-                            <span className="font-medium">{getModelDisplayName(task.model)}</span>
+                            <span className="font-medium">{task.model ? (modelDisplayNames[task.model] ?? task.model) : '-'}</span>
                         </div>
                     )}
                     <div className="flex items-center justify-between text-sm">
@@ -597,10 +599,12 @@ function VideoPreviewOverlay({
     task,
     onClose,
     providerDisplayName,
+    modelDisplayNames,
 }: {
     task: Task;
     onClose: () => void;
     providerDisplayName: (name: string) => string;
+    modelDisplayNames: Record<string, string>;
 }) {
     const [copied, setCopied] = useState(false);
 
@@ -626,7 +630,7 @@ function VideoPreviewOverlay({
                     <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">
                             #{task.id} · {providerDisplayName(task.provider)}
-                            {task.model ? ` · ${getModelDisplayName(task.model)}` : ''}
+                            {task.model ? ` · ${modelDisplayNames[task.model] ?? task.model}` : ''}
                         </p>
                         <p className="text-xs text-muted-foreground truncate mt-0.5">
                             {task.prompt}

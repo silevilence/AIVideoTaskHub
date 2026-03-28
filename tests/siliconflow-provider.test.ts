@@ -172,6 +172,34 @@ describe('SiliconFlowProvider', () => {
         });
     });
 
+    describe('getModelsInfo', () => {
+        it('应返回所有模型的详细信息', () => {
+            const infos = provider.getModelsInfo();
+            expect(infos).toHaveLength(provider.models.length);
+            for (const info of infos) {
+                expect(info.id).toBeTruthy();
+                expect(info.displayName).toBeTruthy();
+                expect(provider.models).toContain(info.id);
+            }
+        });
+
+        it('T2V 模型的 i2v 应为 false', () => {
+            const infos = provider.getModelsInfo();
+            const t2v = infos.find((m) => m.id === 'Wan-AI/Wan2.2-T2V-A14B');
+            expect(t2v).toBeDefined();
+            expect(t2v!.displayName).toBe('Wan2.2 文生视频');
+            expect(t2v!.capabilities!.i2v).toBe(false);
+        });
+
+        it('I2V 模型的 i2v 应为 true', () => {
+            const infos = provider.getModelsInfo();
+            const i2v = infos.find((m) => m.id === 'Wan-AI/Wan2.2-I2V-A14B');
+            expect(i2v).toBeDefined();
+            expect(i2v!.displayName).toBe('Wan2.2 图生视频');
+            expect(i2v!.capabilities!.i2v).toBe(true);
+        });
+    });
+
     describe('downloadVideo', () => {
         it('应通过 fetch stream 下载文件到指定路径', async () => {
             // 模拟 ReadableStream
