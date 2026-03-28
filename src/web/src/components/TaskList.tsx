@@ -379,13 +379,13 @@ function TaskCard({
                                 #{task.id}
                             </span>
                         </div>
-                        <p className="text-sm leading-relaxed break-words">
+                        <p className="text-sm leading-relaxed wrap-break-word">
                             {task.prompt}
                         </p>
                         {task.error_message && (
                             <div className="flex items-start gap-2 rounded-lg bg-destructive/10 p-3">
                                 <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                                <p className="text-xs text-destructive break-words">
+                                <p className="text-xs text-destructive wrap-break-word">
                                     {task.error_message}
                                 </p>
                             </div>
@@ -551,7 +551,7 @@ function TaskParamsModal({
                     {task.provider_task_id && (
                         <div className="flex items-center justify-between text-sm">
                             <span className="text-muted-foreground">平台任务ID</span>
-                            <span className="font-medium text-xs font-mono truncate max-w-[200px]" title={task.provider_task_id}>
+                            <span className="font-medium text-xs font-mono truncate max-w-50" title={task.provider_task_id}>
                                 {task.provider_task_id}
                             </span>
                         </div>

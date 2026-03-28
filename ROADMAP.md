@@ -136,3 +136,11 @@
             - 图生视频
                 - id: `doubao-seedance-1-0-lite-i2v-250428`
                 - 支持能力：图生视频-参考图、图生视频-首尾帧、图生视频-首帧
+
+- [x] **[P2] 界面美化与功能增强**
+    - [x] 处理所有的警告
+    - [x] Provider选择列表，每个Provider前增加图标
+        - 硅基流动使用 `https://www.siliconflow.cn/favicon.ico`
+        - 火山引擎使用 `https://res.volccdn.com/obj/volc-console-fe/images/favicon.52bcaa41.png`
+        - 图标下载到本地保存
+    - [x] 提交任务前，检查对应Provider的设置项是否都已设置，未设置不能提交

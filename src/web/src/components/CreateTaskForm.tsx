@@ -1,13 +1,20 @@
-import { useState, useEffect, useMemo } from 'react';
-import { fetchProviderModels, fetchProviders, createTask, uploadImage } from '../api';
-import type { ProviderInfo } from '../api';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { fetchProviderModels, fetchProviders, createTask, uploadImage, fetchSettings } from '../api';
+import type { ProviderInfo, ProviderSettings } from '../api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Card, CardContent } from './ui/card';
 import { cn } from '../lib/utils';
-import { Sparkles, Upload, X } from 'lucide-react';
+import { Sparkles, Upload, X, ChevronDown, AlertTriangle } from 'lucide-react';
+import siliconflowIcon from '../assets/icons/siliconflow.png';
+import volcengineIcon from '../assets/icons/volcengine.png';
+
+const PROVIDER_ICONS: Record<string, string> = {
+    siliconflow: siliconflowIcon,
+    volcengine: volcengineIcon,
+};
 
 // ── 模型显示名称 ────────────────────────────────────
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
@@ -131,6 +138,10 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const [uploading, setUploading] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
+    const providerDropdownRef = useRef<HTMLDivElement>(null);
+    const [allSettings, setAllSettings] = useState<Record<string, ProviderSettings>>({});
+    const [settingsWarning, setSettingsWarning] = useState('');
 
     // 火山引擎专有参数
     const [volcRatio, setVolcRatio] = useState('16:9');
@@ -180,10 +191,11 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     }, [caps]);
 
     useEffect(() => {
-        Promise.all([fetchProviderModels(), fetchProviders()])
-            .then(([data, infos]) => {
+        Promise.all([fetchProviderModels(), fetchProviders(), fetchSettings()])
+            .then(([data, infos, settings]) => {
                 setProviderModels(data);
                 setProviderInfos(infos);
+                setAllSettings(settings);
                 const names = Object.keys(data).filter((p) => p !== 'mock');
                 if (names.length > 0 && !provider) {
                     setProvider(names[0]);
@@ -192,6 +204,35 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
             })
             .catch(() => setError('获取 Provider 列表失败'));
     }, []);
+
+    // 关闭 provider 下拉菜单（点击外部时）
+    useEffect(() => {
+        function handleClickOutside(e: MouseEvent) {
+            if (providerDropdownRef.current && !providerDropdownRef.current.contains(e.target as Node)) {
+                setProviderDropdownOpen(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    // 检查当前 provider 的必填设置是否已配置
+    const missingSettings = useMemo(() => {
+        if (!provider || !allSettings[provider]) return [];
+        const ps = allSettings[provider];
+        return ps.schema
+            .filter((s) => s.required && !ps.values[s.key])
+            .map((s) => s.label);
+    }, [provider, allSettings]);
+
+    // 当 provider 变化时更新警告
+    useEffect(() => {
+        if (missingSettings.length > 0) {
+            setSettingsWarning(`请先在设置中配置：${missingSettings.join('、')}`);
+        } else {
+            setSettingsWarning('');
+        }
+    }, [missingSettings]);
 
     const resetVolcState = () => {
         setImageUrl('');
@@ -347,23 +388,48 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label htmlFor="provider">平台</Label>
-                                <select
-                                    id="provider"
-                                    value={provider}
-                                    onChange={(e) =>
-                                        handleProviderChange(e.target.value)
-                                    }
-                                    className={selectClass}
-                                >
-                                    {providers.map((p) => {
-                                        const info = providerInfos.find((i) => i.name === p);
-                                        return (
-                                            <option key={p} value={p}>
-                                                {info?.displayName ?? p}
-                                            </option>
-                                        );
-                                    })}
-                                </select>
+                                <div className="relative" ref={providerDropdownRef}>
+                                    <button
+                                        id="provider"
+                                        type="button"
+                                        onClick={() => setProviderDropdownOpen(!providerDropdownOpen)}
+                                        className={cn(selectClass, 'flex items-center justify-between')}
+                                    >
+                                        <span className="flex items-center gap-2 truncate">
+                                            {PROVIDER_ICONS[provider] && (
+                                                <img src={PROVIDER_ICONS[provider]} alt="" className="h-4 w-4 shrink-0" />
+                                            )}
+                                            {providerInfos.find((i) => i.name === provider)?.displayName ?? provider}
+                                        </span>
+                                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                    </button>
+                                    {providerDropdownOpen && (
+                                        <div className="absolute z-50 mt-1 w-full rounded-md border border-input bg-card shadow-lg overflow-hidden">
+                                            {providers.map((p) => {
+                                                const info = providerInfos.find((i) => i.name === p);
+                                                return (
+                                                    <button
+                                                        key={p}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            handleProviderChange(p);
+                                                            setProviderDropdownOpen(false);
+                                                        }}
+                                                        className={cn(
+                                                            'flex items-center gap-2 w-full px-3 py-2.5 text-sm hover:bg-accent cursor-pointer',
+                                                            provider === p && 'bg-accent',
+                                                        )}
+                                                    >
+                                                        {PROVIDER_ICONS[p] && (
+                                                            <img src={PROVIDER_ICONS[p]} alt="" className="h-4 w-4 shrink-0" />
+                                                        )}
+                                                        {info?.displayName ?? p}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="model">模型</Label>
@@ -797,10 +863,17 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                             <p className="text-sm text-destructive">{error}</p>
                         )}
 
+                        {settingsWarning && (
+                            <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 p-3">
+                                <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                                <p className="text-sm text-amber-500">{settingsWarning}</p>
+                            </div>
+                        )}
+
                         <Button
                             type="submit"
                             className="w-full"
-                            disabled={submitting || !prompt.trim()}
+                            disabled={submitting || !prompt.trim() || missingSettings.length > 0}
                         >
                             <Sparkles className="h-4 w-4 mr-2" />
                             {submitting ? '提交中...' : '创建任务'}
