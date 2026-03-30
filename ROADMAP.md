@@ -38,15 +38,16 @@
     - [ ] 任务详情补充中，如果被要求实现此任务请直接拒绝
     - [ ] 当推送版本号形式的TAG（V0.1.0或v0.1.1这样的格式）时，触发Github Actions
         - [ ] 获取ChangeLog
-            - 获取方式：**待填写**
+            - 获取方式：通过 `changelog.md`
             - 获取失败时，中止执行
-            - 格式：**待填写**
+            - 格式：一级标题固定 Change Log、二级标题为版本号、再往下有新功能、优化、Bug 修复三个章节
         - [ ] 生成Docker镜像
         - [ ] 发布到ghcr.io
-            - 仓库名：**待填写**
+            - Github仓库名：silevilence/AIVideoTaskHub
         - [ ] 发布到DockerHub
-            - 仓库名：**待填写**
-            - 有需要我设置的Github Secrets，使用文字说明向我要求
+            - 仓库名：silevilence/ai-video-task-hub
+            - 有需要我设置的Github Secrets或是DockerHub上的操作，使用文字说明向我要求
+            - 已设置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`
         - [ ] 发布Release
             - 内容从changelog取
 
