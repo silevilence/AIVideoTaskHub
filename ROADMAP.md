@@ -14,6 +14,10 @@
         - [ ] 回收站删除任务时，判断一下本地上传的图片是否有别的未删除任务在使用，没有时才删除本地图片
     - [ ] 本地图片上传增强
         - [ ] 参考图上传本地图片时，允许用户在以前已上传的图片里直接选择，后续按上传本地图片处理，防止一样的图片重复上传
+    - [ ] 日志
+        - [ ] 在本地 `data/logs`，数据库和控制台输出日志，主要指示一些状态信息
+
+## 🚧 开发中
 
 - [ ] **[P1] 新增Provider AIHubMix**
     - [ ] OpenAI Sora格式
@@ -33,24 +37,6 @@
         - [ ] 本地缓存，每天更新一次，也可在设置中点击按钮手动更新
         - [ ] 模型获取接口参考文档为 `https://docs.aihubmix.com/cn/api/Models-API`，实现前请参考
     - [ ] 图标使用：`https://resource.aihubmix.com/logo.png?v=2`
-
-## 🚧 开发中
-
-- [ ] **[P1] 自动发布**
-    - [ ] 当推送版本号形式的TAG（V0.1.0或v0.1.1这样的格式）时，触发Github Actions
-        - [ ] 获取ChangeLog
-            - 获取方式：通过 `changelog.md`
-            - 获取失败时，中止执行
-            - 格式：一级标题固定 Change Log、二级标题为版本号、再往下有新功能、优化、Bug 修复三个章节
-        - [ ] 生成Docker镜像
-        - [ ] 发布到ghcr.io
-            - Github仓库名：silevilence/AIVideoTaskHub
-        - [ ] 发布到DockerHub
-            - 仓库名：silevilence/ai-video-task-hub
-            - 有需要我设置的Github Secrets或是DockerHub上的操作，使用文字说明向我要求
-            - 已设置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`
-        - [ ] 发布Release
-            - 内容从changelog取
 
 ## ✅ 已完成
 
@@ -203,3 +189,19 @@
         - 需要显示媒体文件的硬盘占用
         - 超过30天的任务显示彻底删除按钮，点击后需要多次确认
         - 彻底删除后回收站里也不显示，本地文件删除（上传的参考图片和下载的媒体文件）
+
+- [x] **[P1] 自动发布**
+    - [x] 当推送版本号形式的TAG（V0.1.0或v0.1.1这样的格式）时，触发Github Actions
+        - [x] 获取ChangeLog
+            - 获取方式：通过 `changelog.md`
+            - 获取失败时，中止执行
+            - 格式：一级标题固定 Change Log、二级标题为版本号、再往下有新功能、优化、Bug 修复三个章节
+        - [x] 生成Docker镜像
+        - [x] 发布到ghcr.io
+            - Github仓库名：silevilence/AIVideoTaskHub
+        - [x] 发布到DockerHub
+            - 仓库名：silevilence/ai-video-task-hub
+            - 有需要我设置的Github Secrets或是DockerHub上的操作，使用文字说明向我要求
+            - 已设置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`
+        - [x] 发布Release
+            - 内容从changelog取

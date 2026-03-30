@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/silevilence/aivideotaskhub:latest
+    build: .
     container_name: ai-video-task-hub
     ports:
       - "3000:3000"
