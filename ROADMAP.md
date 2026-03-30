@@ -34,8 +34,9 @@
         - [ ] 模型获取接口参考文档为 `https://docs.aihubmix.com/cn/api/Models-API`，实现前请参考
     - [ ] 图标使用：`https://resource.aihubmix.com/logo.png?v=2`
 
+## 🚧 开发中
+
 - [ ] **[P1] 自动发布**
-    - [ ] 任务详情补充中，如果被要求实现此任务请直接拒绝
     - [ ] 当推送版本号形式的TAG（V0.1.0或v0.1.1这样的格式）时，触发Github Actions
         - [ ] 获取ChangeLog
             - 获取方式：通过 `changelog.md`
@@ -50,8 +51,6 @@
             - 已设置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`
         - [ ] 发布Release
             - 内容从changelog取
-
-## 🚧 开发中
 
 ## ✅ 已完成
 
