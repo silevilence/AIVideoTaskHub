@@ -32,7 +32,8 @@ export function initDb(dbPath: string = process.env.DB_PATH || DEFAULT_DB_PATH):
             retry_count     INTEGER NOT NULL DEFAULT 0,
             created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
             updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-            deleted_at      TEXT
+            deleted_at      TEXT,
+            purged_at       TEXT
         );
     `);
 
@@ -50,6 +51,9 @@ export function initDb(dbPath: string = process.env.DB_PATH || DEFAULT_DB_PATH):
     }
     if (!columns.some((c) => c.name === 'extra_params')) {
         db.exec('ALTER TABLE tasks ADD COLUMN extra_params TEXT');
+    }
+    if (!columns.some((c) => c.name === 'purged_at')) {
+        db.exec('ALTER TABLE tasks ADD COLUMN purged_at TEXT');
     }
 }
 

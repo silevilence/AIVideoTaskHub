@@ -13,6 +13,7 @@ export interface Task {
     created_at: string;
     updated_at: string;
     deleted_at: string | null;
+    purged_at: string | null;
 }
 
 const BASE = '/api';
@@ -149,4 +150,30 @@ export async function retryTask(id: number): Promise<Task> {
 export async function deleteTask(id: number): Promise<void> {
     const res = await fetch(`${BASE}/tasks/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('删除任务失败');
+}
+
+// ── 回收站 API ──────────────────────────
+
+export interface TrashTask extends Task {
+    file_size: number;
+}
+
+export async function fetchTrashTasks(): Promise<TrashTask[]> {
+    const res = await fetch(`${BASE}/trash`);
+    if (!res.ok) throw new Error('获取回收站任务列表失败');
+    return res.json();
+}
+
+export async function fetchTrashTask(id: number): Promise<TrashTask> {
+    const res = await fetch(`${BASE}/trash/${id}`);
+    if (!res.ok) throw new Error('获取回收站任务详情失败');
+    return res.json();
+}
+
+export async function purgeTask(id: number): Promise<void> {
+    const res = await fetch(`${BASE}/trash/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '彻底删除任务失败');
+    }
 }

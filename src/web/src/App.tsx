@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { CreateTaskForm } from './components/CreateTaskForm';
 import { TaskList } from './components/TaskList';
+import { RecycleBin } from './components/RecycleBin';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ThemeToggle } from './components/ThemeToggle';
 import { useTheme } from './hooks/use-theme';
 import { cn } from './lib/utils';
-import { Video, Sparkles, ListTodo, Settings } from 'lucide-react';
+import { Video, Sparkles, ListTodo, Settings, Trash2 } from 'lucide-react';
 
-type Tab = 'create' | 'tasks' | 'settings';
+type Tab = 'create' | 'tasks' | 'trash' | 'settings';
 
 const tabs: { id: Tab; label: string; icon: typeof Sparkles }[] = [
   { id: 'create', label: '创建任务', icon: Sparkles },
   { id: 'tasks', label: '任务状态', icon: ListTodo },
+  { id: 'trash', label: '回收站', icon: Trash2 },
   { id: 'settings', label: '设置', icon: Settings },
 ];
 
@@ -70,6 +72,7 @@ function App() {
           />
         )}
         {activeTab === 'tasks' && <TaskList refreshKey={refreshKey} />}
+        {activeTab === 'trash' && <RecycleBin />}
         {activeTab === 'settings' && <SettingsPanel />}
       </main>
     </div>

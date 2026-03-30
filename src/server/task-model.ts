@@ -15,6 +15,7 @@ export interface Task {
     created_at: string;
     updated_at: string;
     deleted_at: string | null;
+    purged_at: string | null;
 }
 
 export interface InsertTaskParams {
@@ -158,6 +159,62 @@ export function filterTasks(filter: TaskFilter): Task[] {
 
     const sql = `SELECT * FROM tasks WHERE ${conditions.join(' AND ')} ORDER BY id DESC`;
     return db.prepare(sql).all(params) as Task[];
+}
+
+/** 获取所有回收站中的任务（已软删除、未彻底删除），按删除时间倒序 */
+export function getDeletedTasks(): Task[] {
+    const db = getDb();
+    return db
+        .prepare('SELECT * FROM tasks WHERE deleted_at IS NOT NULL AND purged_at IS NULL ORDER BY deleted_at DESC')
+        .all() as Task[];
+}
+
+/** 根据 id 获取回收站中的单条任务 */
+export function getDeletedTaskById(id: number): Task | undefined {
+    const db = getDb();
+    return db
+        .prepare('SELECT * FROM tasks WHERE id = ? AND deleted_at IS NOT NULL AND purged_at IS NULL')
+        .get(id) as Task | undefined;
+}
+
+export interface PurgeResult {
+    success: boolean;
+    error?: string;
+    filesToDelete?: string[];
+}
+
+/** 彻底删除回收站中的任务（需已删除超过30天） */
+export function purgeTask(id: number): PurgeResult {
+    const db = getDb();
+    const task = db
+        .prepare('SELECT * FROM tasks WHERE id = ? AND deleted_at IS NOT NULL AND purged_at IS NULL')
+        .get(id) as Task | undefined;
+
+    if (!task) {
+        return { success: false, error: '任务不存在或不在回收站中' };
+    }
+
+    // 检查是否已删除超过30天
+    const deletedAt = new Date(task.deleted_at + 'Z');
+    const now = new Date();
+    const diffDays = (now.getTime() - deletedAt.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffDays < 30) {
+        return { success: false, error: `任务删除未满30天（已${Math.floor(diffDays)}天），无法彻底删除` };
+    }
+
+    // 收集需要清理的本地文件
+    const filesToDelete: string[] = [];
+    if (task.image_url && (task.image_url.startsWith('/uploads/') || task.image_url.startsWith('/uploads\\'))) {
+        filesToDelete.push(task.image_url);
+    }
+    if (task.result_url && (task.result_url.startsWith('/videos/') || task.result_url.startsWith('/videos\\'))) {
+        filesToDelete.push(task.result_url);
+    }
+
+    // 标记为已彻底删除
+    db.prepare("UPDATE tasks SET purged_at = datetime('now') WHERE id = ?").run(id);
+
+    return { success: true, filesToDelete };
 }
 
 /** 读取一条设置 */

@@ -12,6 +12,9 @@ import {
     getSetting,
     setSetting,
     filterTasks,
+    getDeletedTasks,
+    getDeletedTaskById,
+    purgeTask,
 } from './task-model.js';
 
 export function createTaskRouter(registry: ProviderRegistry): Router {
@@ -222,7 +225,7 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
         res.json(updated);
     });
 
-    // 删除任务
+    // 删除任务（软删除）
     router.delete('/tasks/:id', (req, res) => {
         const id = Number(req.params.id);
         if (isNaN(id)) {
@@ -235,6 +238,88 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
             return;
         }
         res.status(204).send();
+    });
+
+    // ── 回收站相关接口 ──────────────────────────
+
+    // 获取回收站任务列表
+    router.get('/trash', (req, res) => {
+        const tasks = getDeletedTasks();
+        const dataDir = process.env.DATA_DIR || 'data';
+
+        const tasksWithSize = tasks.map((task) => {
+            let fileSize = 0;
+            // 计算本地视频文件大小
+            if (task.result_url && task.result_url.startsWith('/videos/')) {
+                try {
+                    const filePath = path.resolve(dataDir, task.result_url.slice(1));
+                    const stat = fs.statSync(filePath);
+                    fileSize += stat.size;
+                } catch { /* 文件不存在 */ }
+            }
+            // 计算本地上传图片大小
+            if (task.image_url && task.image_url.startsWith('/uploads/')) {
+                try {
+                    const filePath = path.resolve(dataDir, task.image_url.slice(1));
+                    const stat = fs.statSync(filePath);
+                    fileSize += stat.size;
+                } catch { /* 文件不存在 */ }
+            }
+            return { ...task, file_size: fileSize };
+        });
+
+        res.json(tasksWithSize);
+    });
+
+    // 获取回收站指定任务
+    router.get('/trash/:id', (req, res) => {
+        const id = Number(req.params.id);
+        if (isNaN(id)) {
+            res.status(400).json({ error: '无效的任务 ID' });
+            return;
+        }
+        const task = getDeletedTaskById(id);
+        if (!task) {
+            res.status(404).json({ error: '任务不存在或不在回收站中' });
+            return;
+        }
+        res.json(task);
+    });
+
+    // 彻底删除回收站任务
+    router.delete('/trash/:id', (req, res) => {
+        const id = Number(req.params.id);
+        if (isNaN(id)) {
+            res.status(400).json({ error: '无效的任务 ID' });
+            return;
+        }
+
+        const result = purgeTask(id);
+        if (!result.success) {
+            // 区分"不存在"和"未满30天"
+            const task = getDeletedTaskById(id);
+            if (!task) {
+                res.status(404).json({ error: result.error });
+            } else {
+                res.status(400).json({ error: result.error });
+            }
+            return;
+        }
+
+        // 删除本地文件
+        const dataDir = process.env.DATA_DIR || 'data';
+        if (result.filesToDelete) {
+            for (const relPath of result.filesToDelete) {
+                try {
+                    const fullPath = path.resolve(dataDir, relPath.slice(1));
+                    if (fs.existsSync(fullPath)) {
+                        fs.unlinkSync(fullPath);
+                    }
+                } catch { /* 文件删除失败不阻塞 */ }
+            }
+        }
+
+        res.json({ ok: true });
     });
 
     return router;
