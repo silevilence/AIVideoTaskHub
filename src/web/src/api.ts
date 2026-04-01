@@ -52,6 +52,7 @@ export async function fetchProviders(): Promise<ProviderInfo[]> {
 
 export interface ModelCapabilities {
     i2v: boolean;
+    i2vOnly?: boolean;
     firstLastFrame: boolean;
     referenceImage: boolean;
     audio: boolean;
@@ -59,6 +60,8 @@ export interface ModelCapabilities {
     draft: boolean;
     resolutions: string[];
     durationRange: [number, number];
+    durationOptions?: number[];
+    i2vDurationOptions?: number[];
     autoDuration: boolean;
     defaultResolution: string;
     ratios?: string[];
@@ -68,6 +71,8 @@ export interface ModelInfo {
     id: string;
     displayName: string;
     capabilities?: ModelCapabilities;
+    disabled?: boolean;
+    disabledReason?: string;
 }
 
 export async function fetchProviderModels(): Promise<Record<string, ModelInfo[]>> {
@@ -102,6 +107,8 @@ export interface ProviderSettings {
     displayName: string;
     schema: ProviderSettingSchema[];
     values: Record<string, string>;
+    supportsModelRefresh?: boolean;
+    modelsUpdatedAt?: string;
 }
 
 export async function fetchSettings(): Promise<Record<string, ProviderSettings>> {
@@ -117,6 +124,17 @@ export async function updateProviderSettings(provider: string, settings: Record<
         body: JSON.stringify(settings),
     });
     if (!res.ok) throw new Error('保存设置失败');
+}
+
+export async function refreshProviderModels(provider: string): Promise<{ models: ModelInfo[]; updatedAt: string }> {
+    const res = await fetch(`${BASE}/providers/${encodeURIComponent(provider)}/refresh-models`, {
+        method: 'POST',
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '刷新模型失败');
+    }
+    return res.json();
 }
 
 export async function createTask(params: {

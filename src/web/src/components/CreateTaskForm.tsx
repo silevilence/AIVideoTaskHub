@@ -10,10 +10,12 @@ import { cn } from '../lib/utils';
 import { Sparkles, Upload, X, ChevronDown, AlertTriangle } from 'lucide-react';
 import siliconflowIcon from '../assets/icons/siliconflow.png';
 import volcengineIcon from '../assets/icons/volcengine.png';
+import aihubmixIcon from '../assets/icons/aihubmix.png';
 
 const PROVIDER_ICONS: Record<string, string> = {
     siliconflow: siliconflowIcon,
     volcengine: volcengineIcon,
+    aihubmix: aihubmixIcon,
 };
 
 export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
@@ -29,6 +31,8 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const [error, setError] = useState('');
     const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
     const providerDropdownRef = useRef<HTMLDivElement>(null);
+    const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+    const modelDropdownRef = useRef<HTMLDivElement>(null);
     const [allSettings, setAllSettings] = useState<Record<string, ProviderSettings>>({});
     const [settingsWarning, setSettingsWarning] = useState('');
 
@@ -62,6 +66,7 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
 
     // 是否显示首帧图片上传（由 capabilities 和 volcImageMode 控制）
     const showImageInput = useMemo(() => {
+        if (caps?.i2vOnly) return true;
         if (hasAdvancedCaps) {
             return volcImageMode === 'first_frame' || volcImageMode === 'first_last_frame';
         }
@@ -75,7 +80,7 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const imageModes = useMemo(() => {
         if (!caps) return [];
         const modes: { value: string; label: string }[] = [];
-        modes.push({ value: 'text_to_video', label: '文生视频' });
+        if (!caps.i2vOnly) modes.push({ value: 'text_to_video', label: '文生视频' });
         if (caps.i2v) modes.push({ value: 'first_frame', label: '首帧图生视频' });
         if (caps.firstLastFrame) modes.push({ value: 'first_last_frame', label: '首尾帧图生视频' });
         if (caps.referenceImage) modes.push({ value: 'reference', label: '参考图生视频 (1-4张)' });
@@ -91,17 +96,23 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                 const names = Object.keys(data).filter((p) => p !== 'mock');
                 if (names.length > 0 && !provider) {
                     setProvider(names[0]);
-                    if (data[names[0]].length > 0) setModel(data[names[0]][0].id);
+                    if (data[names[0]].length > 0) {
+                        const first = data[names[0]].find((m) => !m.disabled) ?? data[names[0]][0];
+                        setModel(first.id);
+                    }
                 }
             })
             .catch(() => setError('获取 Provider 列表失败'));
     }, []);
 
-    // 关闭 provider 下拉菜单（点击外部时）
+    // 关闭下拉菜单（点击外部时）
     useEffect(() => {
         function handleClickOutside(e: MouseEvent) {
             if (providerDropdownRef.current && !providerDropdownRef.current.contains(e.target as Node)) {
                 setProviderDropdownOpen(false);
+            }
+            if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+                setModelDropdownOpen(false);
             }
         }
         document.addEventListener('mousedown', handleClickOutside);
@@ -148,7 +159,7 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const handleProviderChange = (name: string) => {
         setProvider(name);
         const m = providerModels[name] ?? [];
-        const firstModel = m.length > 0 ? m[0].id : '';
+        const firstModel = m.length > 0 ? (m.find((mi) => !mi.disabled) ?? m[0]).id : '';
         setModel(firstModel);
         resetVolcState();
         // 设置默认分辨率
@@ -156,6 +167,9 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
             const info = m.find((mi) => mi.id === firstModel);
             if (info?.capabilities?.defaultResolution) {
                 setVolcResolution(info.capabilities.defaultResolution);
+            }
+            if (info?.capabilities?.i2vOnly) {
+                setVolcImageMode('first_frame');
             }
         }
     };
@@ -166,6 +180,10 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
         const info = models.find((mi) => mi.id === modelId);
         if (info?.capabilities?.defaultResolution) {
             setVolcResolution(info.capabilities.defaultResolution);
+        }
+        // i2vOnly 模型自动切换到图生视频模式
+        if (info?.capabilities?.i2vOnly) {
+            setVolcImageMode('first_frame');
         }
     };
 
@@ -327,20 +345,55 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="model">模型</Label>
-                                <select
-                                    id="model"
-                                    value={model}
-                                    onChange={(e) =>
-                                        handleModelChange(e.target.value)
-                                    }
-                                    className={selectClass}
-                                >
-                                    {models.map((m) => (
-                                        <option key={m.id} value={m.id}>
-                                            {m.displayName}
-                                        </option>
-                                    ))}
-                                </select>
+                                <div className="relative" ref={modelDropdownRef}>
+                                    <button
+                                        id="model"
+                                        type="button"
+                                        onClick={() => setModelDropdownOpen(!modelDropdownOpen)}
+                                        className={cn(selectClass, 'flex items-center justify-between')}
+                                    >
+                                        <span className="truncate">
+                                            {currentModelInfo?.displayName ?? model}
+                                        </span>
+                                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                    </button>
+                                    {modelDropdownOpen && (
+                                        <div className="absolute z-50 mt-1 w-full rounded-md border border-input bg-card shadow-lg overflow-hidden">
+                                            <div className="max-h-60 overflow-y-auto">
+                                                {models.map((m) => (
+                                                    <button
+                                                        key={m.id}
+                                                        type="button"
+                                                        disabled={m.disabled}
+                                                        title={m.disabled ? m.disabledReason : undefined}
+                                                        onClick={() => {
+                                                            if (m.disabled) return;
+                                                            handleModelChange(m.id);
+                                                            setModelDropdownOpen(false);
+                                                        }}
+                                                        className={cn(
+                                                            'flex items-center justify-between w-full px-3 py-2.5 text-sm',
+                                                            m.disabled
+                                                                ? 'opacity-50 cursor-not-allowed text-muted-foreground'
+                                                                : 'hover:bg-accent cursor-pointer',
+                                                            model === m.id && !m.disabled && 'bg-accent',
+                                                        )}
+                                                    >
+                                                        <span className="flex items-center gap-2">
+                                                            {m.displayName}
+                                                            {m.disabled && (
+                                                                <span className="text-[10px] text-orange-500">(不可用)</span>
+                                                            )}
+                                                        </span>
+                                                        {m.displayName !== m.id && (
+                                                            <span className="text-[11px] text-muted-foreground ml-2 shrink-0">{m.id}</span>
+                                                        )}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
@@ -360,6 +413,13 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                                 setVolcLastFrameUrl('');
                                                 setVolcLastFramePreview('');
                                                 setVolcRefImages([]);
+                                                // 切换到图生视频模式时，若有 i2vDurationOptions，自动设置时长
+                                                const isI2v = mode.value === 'first_frame' || mode.value === 'first_last_frame';
+                                                if (isI2v && caps?.i2vDurationOptions?.length) {
+                                                    setVolcDuration(String(caps.i2vDurationOptions[0]));
+                                                } else if (caps?.durationOptions?.length) {
+                                                    setVolcDuration(String(caps.durationOptions[0]));
+                                                }
                                             }}
                                             className={cn(
                                                 'inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer',
@@ -617,22 +677,43 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                     <div className="space-y-1.5">
                                         <Label htmlFor="volc-duration">
                                             时长(秒)
-                                            <span className="text-muted-foreground text-[10px] ml-1">
-                                                {caps.durationRange[0]}-{caps.durationRange[1]}
-                                            </span>
+                                            {!caps.durationOptions && (
+                                                <span className="text-muted-foreground text-[10px] ml-1">
+                                                    {caps.durationRange[0]}-{caps.durationRange[1]}
+                                                </span>
+                                            )}
                                         </Label>
                                         {volcAutoDuration ? (
                                             <div className="flex h-10 items-center text-sm text-muted-foreground px-1">自动</div>
-                                        ) : (
-                                            <Input
-                                                id="volc-duration"
-                                                type="number"
-                                                min={caps.durationRange[0]}
-                                                max={caps.durationRange[1]}
-                                                value={volcDuration}
-                                                onChange={(e) => setVolcDuration(e.target.value)}
-                                            />
-                                        )}
+                                        ) : (() => {
+                                            // 图生视频模式下优先使用 i2vDurationOptions
+                                            const isI2vMode = showImageInput || volcImageMode === 'first_frame' || volcImageMode === 'first_last_frame';
+                                            const activeOptions = (isI2vMode && caps.i2vDurationOptions) ? caps.i2vDurationOptions : caps.durationOptions;
+                                            if (activeOptions) {
+                                                return (
+                                                    <select
+                                                        id="volc-duration"
+                                                        value={volcDuration}
+                                                        onChange={(e) => setVolcDuration(e.target.value)}
+                                                        className={selectClass}
+                                                    >
+                                                        {activeOptions.map((d) => (
+                                                            <option key={d} value={String(d)}>{d}秒</option>
+                                                        ))}
+                                                    </select>
+                                                );
+                                            }
+                                            return (
+                                                <Input
+                                                    id="volc-duration"
+                                                    type="number"
+                                                    min={caps.durationRange[0]}
+                                                    max={caps.durationRange[1]}
+                                                    value={volcDuration}
+                                                    onChange={(e) => setVolcDuration(e.target.value)}
+                                                />
+                                            );
+                                        })()}
                                         {caps.autoDuration && (
                                             <label className="flex items-center gap-1.5 cursor-pointer">
                                                 <input
@@ -689,26 +770,31 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                             <span className="text-[10px] text-muted-foreground">(暂不支持)</span>
                                         </label>
                                     )}
-                                    {/* 水印 */}
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={volcWatermark}
-                                            onChange={(e) => setVolcWatermark(e.target.checked)}
-                                            className="h-4 w-4 rounded border-input accent-primary"
-                                        />
-                                        <span className="text-sm">水印</span>
-                                    </label>
-                                    {/* 返回尾帧 */}
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={volcReturnLastFrame}
-                                            onChange={(e) => setVolcReturnLastFrame(e.target.checked)}
-                                            className="h-4 w-4 rounded border-input accent-primary"
-                                        />
-                                        <span className="text-sm">返回尾帧</span>
-                                    </label>
+                                    {/* 以下选项仅火山引擎可用 */}
+                                    {provider === 'volcengine' && (
+                                        <>
+                                            {/* 水印 */}
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={volcWatermark}
+                                                    onChange={(e) => setVolcWatermark(e.target.checked)}
+                                                    className="h-4 w-4 rounded border-input accent-primary"
+                                                />
+                                                <span className="text-sm">水印</span>
+                                            </label>
+                                            {/* 返回尾帧 */}
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={volcReturnLastFrame}
+                                                    onChange={(e) => setVolcReturnLastFrame(e.target.checked)}
+                                                    className="h-4 w-4 rounded border-input accent-primary"
+                                                />
+                                                <span className="text-sm">返回尾帧</span>
+                                            </label>
+                                        </>
+                                    )}
                                     {/* 样片模式 (暂不支持) */}
                                     {caps.draft && (
                                         <label className="flex items-center gap-2 cursor-not-allowed opacity-50" title="暂不支持">
@@ -724,7 +810,8 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                     )}
                                 </div>
 
-                                {/* 服务等级 (暂不支持切换) */}
+                                {/* 服务等级 (仅火山引擎，暂不支持切换) */}
+                                {provider === 'volcengine' && (
                                 <div className="flex items-center gap-3 opacity-50" title="暂不支持">
                                     <Label className="shrink-0">服务等级</Label>
                                     <div className="flex gap-2">
@@ -741,6 +828,7 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                     </div>
                                     <span className="text-[10px] text-muted-foreground">(暂不支持)</span>
                                 </div>
+                                )}
                             </div>
                         )}
 

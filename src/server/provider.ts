@@ -28,6 +28,8 @@ export interface TaskStatusResult {
 export interface ModelCapabilities {
     /** 支持图生视频（首帧） */
     i2v: boolean;
+    /** 仅支持图生视频（不支持文生视频，如 wan2.6-i2v） */
+    i2vOnly?: boolean;
     /** 支持首尾帧 */
     firstLastFrame: boolean;
     /** 支持参考图 */
@@ -42,6 +44,10 @@ export interface ModelCapabilities {
     resolutions: string[];
     /** 支持的时长范围 [min, max] */
     durationRange: [number, number];
+    /** 离散的可选时长值（设置后前端显示下拉而非输入框） */
+    durationOptions?: number[];
+    /** 图生视频时的可选时长值（覆盖 durationRange/durationOptions） */
+    i2vDurationOptions?: number[];
     /** 支持自动时长 (-1) */
     autoDuration: boolean;
     /** 默认分辨率 */
@@ -58,6 +64,10 @@ export interface ModelInfo {
     displayName: string;
     /** 模型能力声明（可选，无则为纯文本生成） */
     capabilities?: ModelCapabilities;
+    /** 是否禁用（不可选择） */
+    disabled?: boolean;
+    /** 禁用原因提示 */
+    disabledReason?: string;
 }
 
 /** Provider 设置项声明 */
@@ -107,4 +117,13 @@ export interface VideoProvider {
 
     /** 将临时视频 URL 下载到本地路径 */
     downloadVideo(videoUrl: string, targetPath: string): Promise<void>;
+
+    /** 刷新动态模型列表（可选，仅支持动态模型的 Provider 需实现） */
+    refreshModels?(): Promise<ModelInfo[]>;
+
+    /** 是否需要刷新模型列表 */
+    needsModelRefresh?(): boolean;
+
+    /** 获取缓存数据以便持久化到数据库 */
+    getCacheData?(): Record<string, string> | undefined;
 }

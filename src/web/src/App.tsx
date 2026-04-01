@@ -24,42 +24,40 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
+      {/* Header with Tabs */}
       <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-xl">
-        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Video className="h-6 w-6 text-primary" />
             <h1 className="text-lg font-heading font-bold tracking-wider">
               AI Video Task Hub
             </h1>
           </div>
-          <ThemeToggle theme={theme} setTheme={setTheme} />
+          <nav className="flex items-center gap-1">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors duration-200 cursor-pointer whitespace-nowrap',
+                    activeTab === tab.id
+                      ? 'bg-primary/15 text-primary'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent',
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+            <div className="ml-2 border-l border-border pl-2">
+              <ThemeToggle theme={theme} setTheme={setTheme} />
+            </div>
+          </nav>
         </div>
       </header>
-
-      {/* Tab Navigation */}
-      <nav className="border-b border-border bg-card/50 backdrop-blur-sm">
-        <div className="max-w-5xl mx-auto px-4 flex gap-1 overflow-x-auto">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors duration-200 cursor-pointer whitespace-nowrap',
-                  activeTab === tab.id
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
 
       {/* Content */}
       <main className="max-w-5xl mx-auto px-4 py-8">

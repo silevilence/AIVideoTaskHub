@@ -1,5 +1,6 @@
 import path from 'path';
 import type { ProviderRegistry } from './provider-registry.js';
+import type { VideoProvider } from './provider.js';
 import { getRunningTasks, updateTaskStatus, type Task } from './task-model.js';
 
 export interface TaskPollerOptions {
@@ -71,7 +72,9 @@ export class TaskPoller {
             return;
         }
 
+        // 没有 provider_task_id：需要重新提交任务到 Provider
         if (!task.provider_task_id) {
+            await this.resubmitTask(task, provider);
             return;
         }
 
@@ -88,10 +91,19 @@ export class TaskPoller {
                         resultUrl: `/videos/${filename}`,
                     });
                 } catch (downloadErr) {
-                    updateTaskStatus(task.id, 'failed', {
-                        errorMessage: `视频下载失败: ${(downloadErr as Error).message}`,
-                        incrementRetry: true,
-                    });
+                    const errMsg = `视频下载失败: ${(downloadErr as Error).message}`;
+                    console.error(`[poller] download error for task ${task.id}: ${errMsg}, url: ${statusResult.videoUrl}`);
+                    if (task.retry_count < this.maxRetries) {
+                        // 保持 running 状态，下次轮询自动重试下载
+                        updateTaskStatus(task.id, 'running', {
+                            errorMessage: errMsg,
+                            incrementRetry: true,
+                        });
+                    } else {
+                        updateTaskStatus(task.id, 'failed', {
+                            errorMessage: `${errMsg}（已达最大重试次数）`,
+                        });
+                    }
                 }
             } else if (statusResult.status === 'failed') {
                 if (task.retry_count < this.maxRetries) {
@@ -109,6 +121,29 @@ export class TaskPoller {
             }
         } catch (err) {
             console.error(`[poller] processTask error for task ${task.id}:`, err);
+        }
+    }
+
+    /** 重新提交没有 provider_task_id 的任务（创建时失败的重试） */
+    private async resubmitTask(task: Task, provider: VideoProvider): Promise<void> {
+        try {
+            const extra = task.extra_params ? JSON.parse(task.extra_params) : undefined;
+            const result = await provider.createTask({
+                prompt: task.prompt,
+                model: task.model ?? undefined,
+                imageUrl: task.image_url ?? undefined,
+                extra,
+            });
+            updateTaskStatus(task.id, 'pending', {
+                providerTaskId: result.providerTaskId,
+            });
+            console.log(`[poller] resubmitted task ${task.id}, provider_task_id: ${result.providerTaskId}`);
+        } catch (err) {
+            console.error(`[poller] resubmit error for task ${task.id}:`, err);
+            updateTaskStatus(task.id, 'failed', {
+                errorMessage: `重试创建失败: ${(err as Error).message}`,
+                incrementRetry: true,
+            });
         }
     }
 }

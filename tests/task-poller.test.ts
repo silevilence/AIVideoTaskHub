@@ -4,12 +4,13 @@ import { insertTask, getTaskById, updateTaskStatus } from '../src/server/task-mo
 import { ProviderRegistry } from '../src/server/provider-registry.js';
 import { MockProvider } from '../src/server/providers/mock-provider.js';
 import { TaskPoller } from '../src/server/task-poller.js';
-import type { VideoProvider, TaskStatusResult } from '../src/server/provider.js';
+import type { VideoProvider, TaskStatusResult, CreateTaskParams, CreateTaskResult } from '../src/server/provider.js';
 
 /** 创建一个可控的 stub provider */
 function createStubProvider(
     name: string,
     overrides: {
+        createTask?: (params: CreateTaskParams) => Promise<CreateTaskResult>;
         getStatus?: (id: string) => Promise<TaskStatusResult>;
         downloadVideo?: (url: string, path: string) => Promise<void>;
     } = {}
@@ -18,7 +19,7 @@ function createStubProvider(
         name,
         displayName: name,
         models: ['stub-model'],
-        createTask: vi.fn().mockResolvedValue({ providerTaskId: 'stub-id' }),
+        createTask: overrides.createTask ?? vi.fn().mockResolvedValue({ providerTaskId: 'stub-id' }),
         getStatus: overrides.getStatus ?? vi.fn().mockResolvedValue({ status: 'running' }),
         downloadVideo: overrides.downloadVideo ?? vi.fn().mockResolvedValue(undefined),
         getSettingsSchema: vi.fn().mockReturnValue([]),
@@ -153,7 +154,7 @@ describe('TaskPoller', () => {
             expect(downloadFn.mock.calls[0][0]).toBe('https://example.com/video.mp4');
         });
 
-        it('下载失败时应标记 failed 并增加 retry_count', async () => {
+        it('下载失败时应保持 running 并增加 retry_count（自动重试）', async () => {
             const stubProvider = createStubProvider('stub', {
                 getStatus: vi.fn().mockResolvedValue({
                     status: 'success',
@@ -170,9 +171,34 @@ describe('TaskPoller', () => {
             await poller.poll();
 
             const updated = getTaskById(task.id)!;
-            expect(updated.status).toBe('failed');
+            expect(updated.status).toBe('running');
             expect(updated.error_message).toContain('视频下载失败');
             expect(updated.retry_count).toBe(1);
+        });
+
+        it('下载失败达到最大重试次数时应标记 failed', async () => {
+            const stubProvider = createStubProvider('stub', {
+                getStatus: vi.fn().mockResolvedValue({
+                    status: 'success',
+                    videoUrl: 'https://example.com/video.mp4',
+                }),
+                downloadVideo: vi.fn().mockRejectedValue(new Error('网络超时')),
+            });
+            registry.register(stubProvider);
+
+            const task = insertTask({ provider: 'stub', prompt: 'test' });
+            updateTaskStatus(task.id, 'running', { providerTaskId: 'remote-dl-max' });
+            // 模拟已重试 3 次
+            updateTaskStatus(task.id, 'running', { incrementRetry: true });
+            updateTaskStatus(task.id, 'running', { incrementRetry: true });
+            updateTaskStatus(task.id, 'running', { incrementRetry: true });
+
+            poller = new TaskPoller({ registry, maxRetries: 3 });
+            await poller.poll();
+
+            const updated = getTaskById(task.id)!;
+            expect(updated.status).toBe('failed');
+            expect(updated.error_message).toContain('已达最大重试次数');
         });
     });
 
@@ -220,6 +246,47 @@ describe('TaskPoller', () => {
             const updated = getTaskById(task.id)!;
             expect(updated.status).toBe('failed');
             expect(updated.retry_count).toBe(3); // 不再增加
+        });
+    });
+
+    describe('poll - 重新提交任务', () => {
+        it('pending 任务无 provider_task_id 时应重新提交', async () => {
+            const createTaskFn = vi.fn().mockResolvedValue({ providerTaskId: 'new-remote-id' });
+            const stubProvider = createStubProvider('stub', {
+                createTask: createTaskFn,
+            });
+            registry.register(stubProvider);
+
+            // 模拟创建时失败未获得 provider_task_id，然后被重试为 pending
+            const task = insertTask({ provider: 'stub', prompt: 'test prompt', model: 'test-model' });
+            // task 此时 status='pending', provider_task_id=null
+
+            poller = new TaskPoller({ registry });
+            await poller.poll();
+
+            const updated = getTaskById(task.id)!;
+            expect(updated.status).toBe('pending');
+            expect(updated.provider_task_id).toBe('new-remote-id');
+            expect(createTaskFn).toHaveBeenCalledOnce();
+            expect(createTaskFn.mock.calls[0][0].prompt).toBe('test prompt');
+        });
+
+        it('重新提交失败时应标记为 failed', async () => {
+            const createTaskFn = vi.fn().mockRejectedValue(new Error('参数无效'));
+            const stubProvider = createStubProvider('stub', {
+                createTask: createTaskFn,
+            });
+            registry.register(stubProvider);
+
+            const task = insertTask({ provider: 'stub', prompt: 'test' });
+
+            poller = new TaskPoller({ registry });
+            await poller.poll();
+
+            const updated = getTaskById(task.id)!;
+            expect(updated.status).toBe('failed');
+            expect(updated.error_message).toContain('重试创建失败');
+            expect(updated.retry_count).toBe(1);
         });
     });
 

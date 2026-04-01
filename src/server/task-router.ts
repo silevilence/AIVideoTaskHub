@@ -16,6 +16,7 @@ import {
     getDeletedTaskById,
     purgeTask,
 } from './task-model.js';
+import type { ModelInfo } from './provider.js';
 
 export function createTaskRouter(registry: ProviderRegistry): Router {
     const router = Router();
@@ -43,17 +44,25 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
 
     // 获取所有 Provider 的设置 schema + 当前值
     router.get('/settings', (_req, res) => {
-        const result: Record<string, { displayName: string; schema: ReturnType<typeof registry.get extends (...a: unknown[]) => infer R ? R : never>; values: Record<string, string> }> = {};
+        const result: Record<string, { displayName: string; schema: ReturnType<typeof registry.get extends (...a: unknown[]) => infer R ? R : never>; values: Record<string, string>; supportsModelRefresh?: boolean; modelsUpdatedAt?: string }> = {};
         for (const name of registry.listNames()) {
             const provider = registry.get(name);
             if (provider) {
                 const schema = provider.getSettingsSchema();
                 if (schema.length > 0) {
-                    result[name] = {
+                    const entry: (typeof result)[string] = {
                         displayName: provider.displayName,
                         schema: schema as never,
                         values: provider.getCurrentSettings(),
                     };
+                    if (typeof provider.refreshModels === 'function') {
+                        entry.supportsModelRefresh = true;
+                        const cacheData = provider.getCacheData?.();
+                        if (cacheData?._models_updated_at) {
+                            entry.modelsUpdatedAt = cacheData._models_updated_at;
+                        }
+                    }
+                    result[name] = entry;
                 }
             }
         }
@@ -320,6 +329,29 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
         }
 
         res.json({ ok: true });
+    });
+
+    // ── 模型刷新接口 ──────────────────────────
+
+    router.post('/providers/:provider/refresh-models', async (req, res) => {
+        const providerName = req.params.provider;
+        const provider = registry.get(providerName);
+        if (!provider || typeof provider.refreshModels !== 'function') {
+            res.status(404).json({ error: `Provider "${providerName}" 不存在或不支持模型刷新` });
+            return;
+        }
+        try {
+            const models: ModelInfo[] = await provider.refreshModels();
+            const cacheData = provider.getCacheData?.();
+            if (cacheData) {
+                for (const [key, value] of Object.entries(cacheData)) {
+                    setSetting(`provider:${providerName}:${key}`, value);
+                }
+            }
+            res.json({ models, updatedAt: new Date().toISOString() });
+        } catch (err) {
+            res.status(500).json({ error: `刷新模型失败: ${(err as Error).message}` });
+        }
     });
 
     return router;

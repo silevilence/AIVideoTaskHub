@@ -15,28 +15,13 @@
     - [ ] 本地图片上传增强
         - [ ] 参考图上传本地图片时，允许用户在以前已上传的图片里直接选择，后续按上传本地图片处理，防止一样的图片重复上传
     - [ ] 日志
-        - [ ] 在本地 `data/logs`，数据库和控制台输出日志，主要指示一些状态信息
+        - [ ] 在本地 `data/logs`，数据库和控制台输出日志，主要指示一些状态过程信息，如创建任务、任务状态变更等
+    - [ ] 回收站增强
+        - [ ] 支持将任务从回收站还原
+        - [ ] 还原后再放入回收站，时间重新计数
+    - [ ] 设置里，设置的key和从环境变量中读取的key，使用不同的文字描述来区分
 
 ## 🚧 开发中
-
-- [ ] **[P1] 新增Provider AIHubMix**
-    - [ ] OpenAI Sora格式
-        - 由于OpenAI要停止视频服务了，安全起见不要用OpenAI的SDK，按说明文档自己实现
-    - [ ] 文档地址：`https://docs.aihubmix.com/cn/api/Video-Gen`，实现前参考一下，也可参考本地缓存： `refs/aihubmix/video.md`
-    - [ ] 支持参数
-        - `prompt`: 视频描述文本
-        - `seconds`: 视频时长（秒），统一使用字符串类型，如 "5"、"8"（见各模型详解）
-        - `size`: 分辨率，格式 宽x高，如 1920x1080（各模型支持值不同）
-        - `input_reference`: 参考图片（图生视频），支持 URL 或 base64
-    - [ ] 模型能力
-        - 根据各模型能力与支持的参数值不同，请根据文档针对每个模型设置
-    - [ ] 模型列表
-        - [ ] 通过 `https://aihubmix.com/api/v1/models` 获取
-            - 视频的模型的`types`字段为`video`
-            - 模型能力上面文档里有的根据文档里来, 没有的判断`input_modalities`中包含`image`的为支持图生视频的
-        - [ ] 本地缓存，每天更新一次，也可在设置中点击按钮手动更新
-        - [ ] 模型获取接口参考文档为 `https://docs.aihubmix.com/cn/api/Models-API`，实现前请参考
-    - [ ] 图标使用：`https://resource.aihubmix.com/logo.png?v=2`
 
 ## ✅ 已完成
 
@@ -205,3 +190,22 @@
             - 已设置 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`
         - [x] 发布Release
             - 内容从changelog取
+
+- [x] **[P1] 新增Provider AIHubMix**
+    - [x] OpenAI Sora格式
+        - 不要用OpenAI的SDK，按说明文档自己实现
+    - [x] 文档地址：`https://docs.aihubmix.com/cn/api/Video-Gen`，实现前参考一下，也可参考本地缓存： `refs/aihubmix/video.md`
+    - [x] 支持参数
+        - `prompt`: 视频描述文本
+        - `seconds`: 视频时长（秒），统一使用字符串类型，如 "5"、"8"（见各模型详解）
+        - `size`: 分辨率，格式 宽x高，如 1920x1080（各模型支持值不同）
+        - `input_reference`: 参考图片（图生视频），支持 URL 或 base64
+    - [x] 模型能力
+        - 根据各模型能力与支持的参数值不同，请根据文档针对每个模型设置
+    - [x] 模型列表
+        - [x] 通过 `https://aihubmix.com/api/v1/models` 获取
+            - 视频的模型的`types`字段为`video`
+            - 模型能力上面文档里有的根据文档里来, 没有的判断`input_modalities`中包含`image`的为支持图生视频的
+        - [x] 本地缓存，每天更新一次，也可在设置中点击按钮手动更新
+        - [x] 模型获取接口参考文档为 `https://docs.aihubmix.com/cn/api/Models-API`，实现前请参考
+    - [x] 图标使用：`https://resource.aihubmix.com/logo.png?v=2`

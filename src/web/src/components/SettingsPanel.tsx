@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
-import { fetchSettings, updateProviderSettings } from '../api';
+import { fetchSettings, updateProviderSettings, refreshProviderModels } from '../api';
 import type { ProviderSettings } from '../api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
-import { Settings, Save, Check, Search } from 'lucide-react';
+import { Settings, Save, Check, Search, RefreshCw } from 'lucide-react';
 
 export function SettingsPanel() {
     const [allSettings, setAllSettings] = useState<Record<string, ProviderSettings>>({});
@@ -13,6 +13,7 @@ export function SettingsPanel() {
     const [saving, setSaving] = useState<Record<string, boolean>>({});
     const [messages, setMessages] = useState<Record<string, string>>({});
     const [search, setSearch] = useState('');
+    const [refreshing, setRefreshing] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
         fetchSettings()
@@ -66,6 +67,29 @@ export function SettingsPanel() {
             setMessages((m) => ({ ...m, [providerName]: '保存失败' }));
         } finally {
             setSaving((s) => ({ ...s, [providerName]: false }));
+        }
+    };
+
+    const handleRefreshModels = async (providerName: string) => {
+        setRefreshing((r) => ({ ...r, [providerName]: true }));
+        setMessages((m) => ({ ...m, [providerName]: '' }));
+        try {
+            const result = await refreshProviderModels(providerName);
+            // 刷新设置（更新 modelsUpdatedAt）
+            const freshData = await fetchSettings();
+            setAllSettings(freshData);
+            setMessages((m) => ({
+                ...m,
+                [providerName]: `已刷新，共 ${result.models.length} 个模型`,
+            }));
+            setTimeout(() => setMessages((m) => ({ ...m, [providerName]: '' })), 3000);
+        } catch (err) {
+            setMessages((m) => ({
+                ...m,
+                [providerName]: `刷新失败: ${(err as Error).message}`,
+            }));
+        } finally {
+            setRefreshing((r) => ({ ...r, [providerName]: false }));
         }
     };
 
@@ -166,13 +190,35 @@ export function SettingsPanel() {
                                 )}
                                 {saving[provName] ? '保存中...' : '保存'}
                             </Button>
-                            {messages[provName] && messages[provName] !== '已保存' && (
+                            {messages[provName] && messages[provName] !== '已保存' && !messages[provName].startsWith('已刷新') && (
                                 <p className="text-sm text-destructive">{messages[provName]}</p>
                             )}
-                            {messages[provName] === '已保存' && (
+                            {(messages[provName] === '已保存' || messages[provName]?.startsWith('已刷新')) && (
                                 <p className="text-sm text-primary">{messages[provName]}</p>
                             )}
                         </div>
+
+                        {/* 模型列表刷新按钮 */}
+                        {ps.supportsModelRefresh && (
+                            <div className="flex items-center gap-3 pt-2 border-t mt-3">
+                                <div className="flex-1">
+                                    <p className="text-xs text-muted-foreground">
+                                        模型列表{ps.modelsUpdatedAt
+                                            ? `（上次更新: ${new Date(ps.modelsUpdatedAt).toLocaleString()}）`
+                                            : '（尚未获取）'}
+                                    </p>
+                                </div>
+                                <Button
+                                    onClick={() => handleRefreshModels(provName)}
+                                    disabled={refreshing[provName]}
+                                    size="sm"
+                                    variant="outline"
+                                >
+                                    <RefreshCw className={`h-4 w-4 mr-1.5 ${refreshing[provName] ? 'animate-spin' : ''}`} />
+                                    {refreshing[provName] ? '刷新中...' : '刷新模型列表'}
+                                </Button>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             ))}
