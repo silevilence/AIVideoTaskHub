@@ -12,6 +12,7 @@ import {
     getDeletedTaskById,
     purgeTask,
     getTaskById,
+    restoreTask,
 } from '../src/server/task-model.js';
 import { ProviderRegistry } from '../src/server/provider-registry.js';
 import { createTaskRouter } from '../src/server/task-router.js';
@@ -165,6 +166,48 @@ describe('回收站 Model 操作', () => {
             expect(result.success).toBe(false);
         });
     });
+
+    describe('restoreTask', () => {
+        it('应恢复软删除的任务', () => {
+            const t1 = insertTask({ provider: 'mock', prompt: '任务1' });
+            deleteTask(t1.id);
+
+            // 确认在回收站中
+            expect(getDeletedTaskById(t1.id)).toBeDefined();
+            expect(getTaskById(t1.id)).toBeUndefined();
+
+            const success = restoreTask(t1.id);
+            expect(success).toBe(true);
+
+            // 已从回收站移出
+            expect(getDeletedTaskById(t1.id)).toBeUndefined();
+            // 恢复到正常任务列表
+            const restored = getTaskById(t1.id);
+            expect(restored).toBeDefined();
+            expect(restored!.deleted_at).toBeNull();
+        });
+
+        it('未删除的任务无法恢复', () => {
+            const t1 = insertTask({ provider: 'mock', prompt: '任务1' });
+            const success = restoreTask(t1.id);
+            expect(success).toBe(false);
+        });
+
+        it('已彻底删除的任务无法恢复', () => {
+            const t1 = insertTask({ provider: 'mock', prompt: '任务1' });
+            const db = getDb();
+            db.prepare("UPDATE tasks SET deleted_at = datetime('now', '-31 days') WHERE id = ?").run(t1.id);
+            purgeTask(t1.id);
+
+            const success = restoreTask(t1.id);
+            expect(success).toBe(false);
+        });
+
+        it('不存在的任务无法恢复', () => {
+            const success = restoreTask(99999);
+            expect(success).toBe(false);
+        });
+    });
 });
 
 // ── Router 层测试 ──────────────────────────
@@ -304,6 +347,58 @@ describe('回收站 API', () => {
                 .send({ provider: 'mock', prompt: '正常任务' });
 
             const res = await request(app).delete(`/api/trash/${createRes.body.id}`);
+            expect(res.status).toBe(404);
+        });
+    });
+
+    describe('POST /api/trash/:id/restore', () => {
+        it('应恢复已删除的任务', async () => {
+            const createRes = await request(app)
+                .post('/api/tasks')
+                .send({ provider: 'mock', prompt: '要恢复的任务' });
+            await request(app).delete(`/api/tasks/${createRes.body.id}`);
+
+            const restoreRes = await request(app).post(`/api/trash/${createRes.body.id}/restore`);
+            expect(restoreRes.status).toBe(200);
+            expect(restoreRes.body.id).toBe(createRes.body.id);
+            expect(restoreRes.body.deleted_at).toBeNull();
+
+            // 回收站中不再可见
+            const trashRes = await request(app).get('/api/trash');
+            expect(trashRes.body).toHaveLength(0);
+
+            // 在正常任务列表中可见
+            const taskRes = await request(app).get(`/api/tasks/${createRes.body.id}`);
+            expect(taskRes.status).toBe(200);
+            expect(taskRes.body.prompt).toBe('要恢复的任务');
+        });
+
+        it('未删除的任务应返回404', async () => {
+            const createRes = await request(app)
+                .post('/api/tasks')
+                .send({ provider: 'mock', prompt: '正常任务' });
+
+            const res = await request(app).post(`/api/trash/${createRes.body.id}/restore`);
+            expect(res.status).toBe(404);
+        });
+
+        it('不存在的任务应返回404', async () => {
+            const res = await request(app).post('/api/trash/99999/restore');
+            expect(res.status).toBe(404);
+        });
+
+        it('已彻底删除的任务应返回404', async () => {
+            const createRes = await request(app)
+                .post('/api/tasks')
+                .send({ provider: 'mock', prompt: '已彻底删除' });
+            await request(app).delete(`/api/tasks/${createRes.body.id}`);
+
+            // 彻底删除
+            const db = getDb();
+            db.prepare("UPDATE tasks SET deleted_at = datetime('now', '-31 days') WHERE id = ?").run(createRes.body.id);
+            await request(app).delete(`/api/trash/${createRes.body.id}`);
+
+            const res = await request(app).post(`/api/trash/${createRes.body.id}/restore`);
             expect(res.status).toBe(404);
         });
     });

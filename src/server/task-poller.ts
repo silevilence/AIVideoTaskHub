@@ -2,6 +2,7 @@ import path from 'path';
 import type { ProviderRegistry } from './provider-registry.js';
 import type { VideoProvider } from './provider.js';
 import { getRunningTasks, updateTaskStatus, type Task } from './task-model.js';
+import { logger } from './logger.js';
 
 export interface TaskPollerOptions {
     registry: ProviderRegistry;
@@ -31,7 +32,6 @@ export class TaskPoller {
     start(): void {
         if (this.timer) return;
         this.timer = setInterval(() => this.poll(), this.intervalMs);
-        console.log(`[poller] started, interval: ${this.intervalMs}ms`);
         // 立即执行一次轮询，处理重启前遗留的任务
         this.poll();
     }
@@ -40,7 +40,7 @@ export class TaskPoller {
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = null;
-            console.log('[poller] stopped');
+            logger.info('轮询器已停止');
         }
     }
 
@@ -57,7 +57,7 @@ export class TaskPoller {
                 await this.processTask(task);
             }
         } catch (err) {
-            console.error('[poller] poll error:', err);
+            logger.error(`轮询出错: ${err}`);
         } finally {
             this.processing = false;
         }
@@ -90,9 +90,10 @@ export class TaskPoller {
                     updateTaskStatus(task.id, 'success', {
                         resultUrl: `/videos/${filename}`,
                     });
+                    logger.taskStatusChanged(task.id, task.status, 'success');
                 } catch (downloadErr) {
                     const errMsg = `视频下载失败: ${(downloadErr as Error).message}`;
-                    console.error(`[poller] download error for task ${task.id}: ${errMsg}, url: ${statusResult.videoUrl}`);
+                    logger.error(`任务 ${task.id} 视频下载失败: ${errMsg}, URL: ${statusResult.videoUrl}`);
                     if (task.retry_count < this.maxRetries) {
                         // 保持 running 状态，下次轮询自动重试下载
                         updateTaskStatus(task.id, 'running', {
@@ -106,6 +107,7 @@ export class TaskPoller {
                     }
                 }
             } else if (statusResult.status === 'failed') {
+                logger.taskStatusChanged(task.id, task.status, 'failed', statusResult.errorMessage);
                 if (task.retry_count < this.maxRetries) {
                     updateTaskStatus(task.id, 'failed', {
                         errorMessage: statusResult.errorMessage ?? '未知错误',
@@ -117,10 +119,11 @@ export class TaskPoller {
                     });
                 }
             } else if (statusResult.status !== task.status) {
+                logger.taskStatusChanged(task.id, task.status, statusResult.status);
                 updateTaskStatus(task.id, statusResult.status);
             }
         } catch (err) {
-            console.error(`[poller] processTask error for task ${task.id}:`, err);
+            logger.error(`任务 ${task.id} 处理出错: ${err}`);
         }
     }
 
@@ -137,9 +140,9 @@ export class TaskPoller {
             updateTaskStatus(task.id, 'pending', {
                 providerTaskId: result.providerTaskId,
             });
-            console.log(`[poller] resubmitted task ${task.id}, provider_task_id: ${result.providerTaskId}`);
+            logger.info(`任务 ${task.id} 重新提交成功, provider_task_id: ${result.providerTaskId}`);
         } catch (err) {
-            console.error(`[poller] resubmit error for task ${task.id}:`, err);
+            logger.error(`任务 ${task.id} 重新提交失败: ${err}`);
             updateTaskStatus(task.id, 'failed', {
                 errorMessage: `重试创建失败: ${(err as Error).message}`,
                 incrementRetry: true,

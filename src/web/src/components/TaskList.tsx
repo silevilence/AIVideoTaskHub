@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { Task, TaskFilter, ProviderInfo } from '../api';
+import type { Task, TaskFilter, ProviderInfo, ApplyParams } from '../api';
 import { fetchTasks, fetchProviders, fetchProviderModels, retryTask, deleteTask } from '../api';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -24,6 +24,8 @@ import {
     Search,
     Filter,
     Info,
+    ExternalLink,
+    Image as ImageIcon,
 } from 'lucide-react';
 
 type BadgeVariant = 'warning' | 'default' | 'success' | 'destructive';
@@ -40,7 +42,7 @@ const STATUS_CONFIG: Record<
 
 const ALL_STATUSES = ['pending', 'running', 'success', 'failed'];
 
-export function TaskList({ refreshKey }: { refreshKey: number }) {
+export function TaskList({ refreshKey, onApplyParams }: { refreshKey: number; onApplyParams: (params: ApplyParams) => void }) {
     const [tasks, setTasks] = useState<Task[]>([]);
     const [loading, setLoading] = useState(true);
     const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -336,6 +338,7 @@ export function TaskList({ refreshKey }: { refreshKey: number }) {
                 <TaskParamsModal
                     task={paramsTask}
                     onClose={() => setParamsTask(null)}
+                    onApplyParams={onApplyParams}
                     providerDisplayName={providerDisplayName}
                     modelDisplayNames={modelDisplayNames}
                 />
@@ -495,24 +498,135 @@ const PARAM_LABELS: Record<string, string> = {
     referenceImageUrls: '参考图片',
 };
 
+// 判断是否为图片类参数
+function isImageParam(key: string): boolean {
+    return key === 'lastFrameImageUrl' || key === 'referenceImageUrls';
+}
+
 function formatParamValue(key: string, value: unknown): string {
     if (typeof value === 'boolean') return value ? '是' : '否';
     if (key === 'duration' && value === -1) return '自动';
     if (key === 'seed' && value === -1) return '随机';
     if (key === 'serviceTier') return value === 'flex' ? '离线推理' : '在线推理';
+    // 图片类参数在单独组件中处理
+    if (isImageParam(key)) return '';
     if (Array.isArray(value)) return value.length + ' 张';
     if (typeof value === 'string' && value.startsWith('data:')) return '(本地上传)';
     return String(value);
 }
 
+// 辅助函数：获取图片预览URL
+function getImagePreviewUrl(url: string): string {
+    // 本地上传的图片（/uploads/开头）直接使用
+    // 外部URL原样返回
+    // base64图片原样返回
+    return url;
+}
+
+// 图片预览链接组件
+function ImagePreviewLink({ url, label }: { url: string; label: string }) {
+    const [showPreview, setShowPreview] = useState(false);
+
+    // 检查是否是有效的可预览 URL
+    const isValidPreviewUrl = url && (
+        url.startsWith('/uploads/') ||
+        url.startsWith('http://') ||
+        url.startsWith('https://') ||
+        url.startsWith('data:image/')
+    );
+
+    if (!isValidPreviewUrl) {
+        // 无效 URL，显示为纯文本
+        return (
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
+                <ImageIcon className="h-3.5 w-3.5" />
+                {label}
+            </span>
+        );
+    }
+
+    return (
+        <>
+            <button
+                onClick={() => setShowPreview(true)}
+                className="inline-flex items-center gap-1 font-medium text-primary hover:underline cursor-pointer"
+            >
+                <ImageIcon className="h-3.5 w-3.5" />
+                {label}
+                <ExternalLink className="h-3 w-3" />
+            </button>
+            {/* 使用内置预览弹窗而非 window.open */}
+            {showPreview && (
+                <div
+                    className="fixed inset-0 z-60 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+                    onClick={() => setShowPreview(false)}
+                >
+                    <div
+                        className="relative max-w-4xl max-h-[90vh] mx-4"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setShowPreview(false)}
+                            className="absolute -top-12 right-0 text-foreground hover:bg-accent"
+                        >
+                            <X className="h-6 w-6" />
+                        </Button>
+                        <img
+                            src={url}
+                            alt={label}
+                            className="max-w-full max-h-[85vh] rounded-lg shadow-2xl"
+                            onError={(e) => {
+                                (e.target as HTMLImageElement).src = '';
+                                (e.target as HTMLImageElement).alt = '图片加载失败';
+                            }}
+                        />
+                        {/* 仅对外部 URL 显示新标签页按钮 */}
+                        {(url.startsWith('http://') || url.startsWith('https://')) && (
+                            <div className="absolute -bottom-10 left-0 right-0 flex justify-center">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => window.open(url, '_blank')}
+                                    className="text-xs"
+                                >
+                                    在新标签页打开
+                                </Button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
+// 参考图片列表预览组件
+function ReferenceImagesPreview({ urls }: { urls: string[] }) {
+    return (
+        <div className="flex flex-wrap gap-1">
+            {urls.map((url, index) => (
+                <ImagePreviewLink
+                    key={index}
+                    url={url}
+                    label={`图${index + 1}`}
+                />
+            ))}
+        </div>
+    );
+}
+
 function TaskParamsModal({
     task,
     onClose,
+    onApplyParams,
     providerDisplayName,
     modelDisplayNames,
 }: {
     task: Task;
     onClose: () => void;
+    onApplyParams?: (params: ApplyParams) => void;
     providerDisplayName: (name: string) => string;
     modelDisplayNames: Record<string, string>;
 }) {
@@ -525,6 +639,18 @@ function TaskParamsModal({
     })();
 
     const entries = Object.entries(params);
+
+    const handleApply = () => {
+        if (!onApplyParams) return;
+        onApplyParams({
+            provider: task.provider,
+            model: task.model,
+            prompt: task.prompt,
+            imageUrl: task.image_url,
+            extraParams: params,
+        });
+        onClose();
+    };
 
     return (
         <div
@@ -573,7 +699,7 @@ function TaskParamsModal({
                     {task.image_url && (
                         <div className="flex items-center justify-between text-sm">
                             <span className="text-muted-foreground">首帧图片</span>
-                            <span className="font-medium">{task.image_url.startsWith('data:') ? '(本地上传)' : '(URL)'}</span>
+                            <ImagePreviewLink url={task.image_url} label={task.image_url.startsWith('data:') ? '本地上传' : 'URL'} />
                         </div>
                     )}
                     <div className="flex items-center justify-between text-sm">
@@ -594,16 +720,39 @@ function TaskParamsModal({
                 {entries.length > 0 && (
                     <div className="px-5 pt-3 space-y-2">
                         <p className="text-xs text-muted-foreground font-medium">生成参数</p>
-                        {entries.map(([key, value]) => (
-                            <div key={key} className="flex items-center justify-between text-sm">
-                                <span className="text-muted-foreground">
-                                    {PARAM_LABELS[key] ?? key}
-                                </span>
-                                <span className="font-medium">
-                                    {formatParamValue(key, value)}
-                                </span>
-                            </div>
-                        ))}
+                        {entries.map(([key, value]) => {
+                            // 处理图片类参数
+                            if (key === 'lastFrameImageUrl' && typeof value === 'string') {
+                                return (
+                                    <div key={key} className="flex items-center justify-between text-sm">
+                                        <span className="text-muted-foreground">{PARAM_LABELS[key]}</span>
+                                        <ImagePreviewLink
+                                            url={value}
+                                            label={value.startsWith('data:') || value.startsWith('/uploads/') ? '本地上传' : 'URL'}
+                                        />
+                                    </div>
+                                );
+                            }
+                            if (key === 'referenceImageUrls' && Array.isArray(value)) {
+                                return (
+                                    <div key={key} className="flex items-center justify-between text-sm">
+                                        <span className="text-muted-foreground">{PARAM_LABELS[key]}</span>
+                                        <ReferenceImagesPreview urls={value as string[]} />
+                                    </div>
+                                );
+                            }
+                            // 普通参数
+                            return (
+                                <div key={key} className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">
+                                        {PARAM_LABELS[key] ?? key}
+                                    </span>
+                                    <span className="font-medium">
+                                        {formatParamValue(key, value)}
+                                    </span>
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
 
@@ -618,6 +767,21 @@ function TaskParamsModal({
                     <div className="px-5 pb-4">
                         <p className="text-xs text-muted-foreground mb-1">错误信息</p>
                         <p className="text-sm text-destructive">{task.error_message}</p>
+                    </div>
+                )}
+
+                {/* 套用参数按钮 */}
+                {onApplyParams && (
+                    <div className="px-5 pb-4 border-t border-border pt-3">
+                        <Button
+                            variant="default"
+                            size="sm"
+                            onClick={handleApply}
+                            className="w-full"
+                        >
+                            <Copy className="h-3.5 w-3.5 mr-1.5" />
+                            套用此参数
+                        </Button>
                     </div>
                 )}
             </div>

@@ -15,8 +15,10 @@ import {
     getDeletedTasks,
     getDeletedTaskById,
     purgeTask,
+    restoreTask,
 } from './task-model.js';
 import type { ModelInfo } from './provider.js';
+import { logger } from './logger.js';
 
 export function createTaskRouter(registry: ProviderRegistry): Router {
     const router = Router();
@@ -42,18 +44,47 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
         res.json(result);
     });
 
-    // 获取所有 Provider 的设置 schema + 当前值
+    // 环境变量到 Provider 设置的映射
+    const ENV_MAPPING: Record<string, Record<string, string>> = {
+        siliconflow: { api_key: 'SILICONFLOW_API_KEY' },
+        volcengine: { api_key: 'VOLCENGINE_API_KEY' },
+        aihubmix: { api_key: 'AIHUBMIX_API_KEY' },
+    };
+
+    // 获取所有 Provider 的设置 schema + 当前值 + 来源
     router.get('/settings', (_req, res) => {
-        const result: Record<string, { displayName: string; schema: ReturnType<typeof registry.get extends (...a: unknown[]) => infer R ? R : never>; values: Record<string, string>; supportsModelRefresh?: boolean; modelsUpdatedAt?: string }> = {};
+        const result: Record<string, { 
+            displayName: string; 
+            schema: ReturnType<typeof registry.get extends (...a: unknown[]) => infer R ? R : never>; 
+            values: Record<string, string>; 
+            sources: Record<string, 'env' | 'saved' | 'none'>;
+            supportsModelRefresh?: boolean; 
+            modelsUpdatedAt?: string 
+        }> = {};
         for (const name of registry.listNames()) {
             const provider = registry.get(name);
             if (provider) {
                 const schema = provider.getSettingsSchema();
                 if (schema.length > 0) {
+                    // 计算每个设置项的来源
+                    const sources: Record<string, 'env' | 'saved' | 'none'> = {};
+                    const envMap = ENV_MAPPING[name] || {};
+                    for (const s of schema) {
+                        const envVarName = envMap[s.key];
+                        if (envVarName && process.env[envVarName]) {
+                            sources[s.key] = 'env';
+                        } else if (getSetting(`provider:${name}:${s.key}`)) {
+                            sources[s.key] = 'saved';
+                        } else {
+                            sources[s.key] = 'none';
+                        }
+                    }
+                    
                     const entry: (typeof result)[string] = {
                         displayName: provider.displayName,
                         schema: schema as never,
                         values: provider.getCurrentSettings(),
+                        sources,
                     };
                     if (typeof provider.refreshModels === 'function') {
                         entry.supportsModelRefresh = true;
@@ -136,6 +167,36 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
         });
     });
 
+    // 获取已上传的图片列表
+    router.get('/uploads', (req, res) => {
+        const uploadDir = path.resolve(process.env.DATA_DIR || 'data', 'uploads');
+        
+        if (!fs.existsSync(uploadDir)) {
+            res.json([]);
+            return;
+        }
+        
+        try {
+            const files = fs.readdirSync(uploadDir)
+                .filter(f => /\.(png|jpg|jpeg|gif|webp)$/i.test(f))
+                .map(filename => {
+                    const filePath = path.join(uploadDir, filename);
+                    const stat = fs.statSync(filePath);
+                    return {
+                        url: `/uploads/${filename}`,
+                        filename,
+                        size: stat.size,
+                        createdAt: stat.birthtime.toISOString(),
+                    };
+                })
+                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); // 按创建时间倒序
+            
+            res.json(files);
+        } catch {
+            res.json([]);
+        }
+    });
+
     // 创建任务
     router.post('/tasks', async (req, res) => {
         const { provider, prompt, model, imageUrl, extra } = req.body;
@@ -168,8 +229,10 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
                 providerTaskId: result.providerTaskId,
             });
             const updated = getTaskById(task.id)!;
+            logger.taskCreated(task.id, provider, model || 'default');
             res.status(201).json(updated);
         } catch (err) {
+            logger.error(`任务 ${task.id} 创建失败: ${(err as Error).message}`);
             updateTaskStatus(task.id, 'failed', {
                 errorMessage: (err as Error).message,
             });
@@ -329,6 +392,24 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
         }
 
         res.json({ ok: true });
+    });
+
+    // 恢复回收站任务
+    router.post('/trash/:id/restore', (req, res) => {
+        const id = Number(req.params.id);
+        if (isNaN(id)) {
+            res.status(400).json({ error: '无效的任务 ID' });
+            return;
+        }
+
+        const success = restoreTask(id);
+        if (!success) {
+            res.status(404).json({ error: '任务不存在或不在回收站中' });
+            return;
+        }
+
+        const restoredTask = getTaskById(id);
+        res.json(restoredTask);
     });
 
     // ── 模型刷新接口 ──────────────────────────

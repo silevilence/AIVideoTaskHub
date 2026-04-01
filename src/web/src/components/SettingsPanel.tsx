@@ -5,7 +5,8 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
-import { Settings, Save, Check, Search, RefreshCw } from 'lucide-react';
+import { Badge } from './ui/badge';
+import { Settings, Save, Check, Search, RefreshCw, Server, Database } from 'lucide-react';
 
 export function SettingsPanel() {
     const [allSettings, setAllSettings] = useState<Record<string, ProviderSettings>>({});
@@ -137,12 +138,27 @@ export function SettingsPanel() {
                     <CardContent className="space-y-4">
                         {ps.schema.map((field) => (
                             <div key={field.key} className="space-y-1.5">
-                                <Label htmlFor={`${provName}-${field.key}`}>
-                                    {field.label}
-                                    {field.required && (
-                                        <span className="text-destructive ml-1">*</span>
+                                <div className="flex items-center gap-2">
+                                    <Label htmlFor={`${provName}-${field.key}`}>
+                                        {field.label}
+                                        {field.required && (
+                                            <span className="text-destructive ml-1">*</span>
+                                        )}
+                                    </Label>
+                                    {/* 来源标签 */}
+                                    {ps.sources[field.key] === 'env' && (
+                                        <Badge variant="secondary" className="text-xs px-1.5 py-0 h-5 gap-1">
+                                            <Server className="h-3 w-3" />
+                                            环境变量
+                                        </Badge>
                                     )}
-                                </Label>
+                                    {ps.sources[field.key] === 'saved' && (
+                                        <Badge variant="outline" className="text-xs px-1.5 py-0 h-5 gap-1">
+                                            <Database className="h-3 w-3" />
+                                            已保存
+                                        </Badge>
+                                    )}
+                                </div>
                                 {field.description && (
                                     <p className="text-xs text-muted-foreground">
                                         {field.description}

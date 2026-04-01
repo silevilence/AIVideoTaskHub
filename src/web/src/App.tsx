@@ -6,7 +6,9 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { ThemeToggle } from './components/ThemeToggle';
 import { useTheme } from './hooks/use-theme';
 import { cn } from './lib/utils';
-import { Video, Sparkles, ListTodo, Settings, Trash2 } from 'lucide-react';
+import { Sparkles, ListTodo, Settings, Trash2 } from 'lucide-react';
+import appIcon from './assets/icons/app-icon.svg';
+import type { ApplyParams } from './api';
 
 type Tab = 'create' | 'tasks' | 'trash' | 'settings';
 
@@ -20,7 +22,19 @@ const tabs: { id: Tab; label: string; icon: typeof Sparkles }[] = [
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('create');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [applyParams, setApplyParams] = useState<ApplyParams | null>(null);
   const { theme, setTheme } = useTheme();
+
+  // 从任务列表或回收站套用参数
+  const handleApplyParams = (params: ApplyParams) => {
+    setApplyParams(params);
+    setActiveTab('create');
+  };
+
+  // 创建表单确认收到参数后清空
+  const handleApplyParamsConsumed = () => {
+    setApplyParams(null);
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -28,7 +42,7 @@ function App() {
       <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-xl">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Video className="h-6 w-6 text-primary" />
+            <img src={appIcon} alt="logo" className="h-6 w-6" />
             <h1 className="text-lg font-heading font-bold tracking-wider">
               AI Video Task Hub
             </h1>
@@ -67,10 +81,12 @@ function App() {
               setRefreshKey((k) => k + 1);
               setActiveTab('tasks');
             }}
+            applyParams={applyParams}
+            onApplyParamsConsumed={handleApplyParamsConsumed}
           />
         )}
-        {activeTab === 'tasks' && <TaskList refreshKey={refreshKey} />}
-        {activeTab === 'trash' && <RecycleBin />}
+        {activeTab === 'tasks' && <TaskList refreshKey={refreshKey} onApplyParams={handleApplyParams} />}
+        {activeTab === 'trash' && <RecycleBin onApplyParams={handleApplyParams} />}
         {activeTab === 'settings' && <SettingsPanel />}
       </main>
     </div>

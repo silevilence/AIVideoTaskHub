@@ -1,13 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchProviderModels, fetchProviders, createTask, uploadImage, fetchSettings } from '../api';
-import type { ProviderInfo, ProviderSettings, ModelInfo, ModelCapabilities } from '../api';
+import { fetchProviderModels, fetchProviders, createTask, uploadImage, fetchSettings, fetchTasks, fetchTrashTasks, fetchUploadedImages } from '../api';
+import type { ProviderInfo, ProviderSettings, ModelInfo, ModelCapabilities, ApplyParams, Task, TrashTask, UploadedImage } from '../api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Card, CardContent } from './ui/card';
 import { cn } from '../lib/utils';
-import { Sparkles, Upload, X, ChevronDown, AlertTriangle } from 'lucide-react';
+import { Sparkles, Upload, X, ChevronDown, AlertTriangle, ClipboardPaste, Play, Info, ExternalLink, Image as ImageIcon } from 'lucide-react';
 import siliconflowIcon from '../assets/icons/siliconflow.png';
 import volcengineIcon from '../assets/icons/volcengine.png';
 import aihubmixIcon from '../assets/icons/aihubmix.png';
@@ -18,8 +18,18 @@ const PROVIDER_ICONS: Record<string, string> = {
     aihubmix: aihubmixIcon,
 };
 
-export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
+export function CreateTaskForm({
+    onCreated,
+    applyParams,
+    onApplyParamsConsumed,
+}: {
+    onCreated: () => void;
+    applyParams?: ApplyParams | null;
+    onApplyParamsConsumed?: () => void;
+}) {
     const [providerModels, setProviderModels] = useState<Record<string, ModelInfo[]>>({});
+    // 使用 ref 保存 applyParams，以便在初始加载时能正确检测是否有待套用参数
+    const applyParamsRef = useRef(applyParams);
     const [providerInfos, setProviderInfos] = useState<ProviderInfo[]>([]);
     const [provider, setProvider] = useState('');
     const [prompt, setPrompt] = useState('');
@@ -35,6 +45,22 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     const modelDropdownRef = useRef<HTMLDivElement>(null);
     const [allSettings, setAllSettings] = useState<Record<string, ProviderSettings>>({});
     const [settingsWarning, setSettingsWarning] = useState('');
+
+    // 套用参数弹窗相关状态
+    const [applyModalOpen, setApplyModalOpen] = useState(false);
+    const [applyModalTab, setApplyModalTab] = useState<'tasks' | 'trash'>('tasks');
+    const [applyTasks, setApplyTasks] = useState<Task[]>([]);
+    const [applyTrashTasks, setApplyTrashTasks] = useState<TrashTask[]>([]);
+    const [applyModalLoading, setApplyModalLoading] = useState(false);
+    const [applyPreviewTask, setApplyPreviewTask] = useState<Task | TrashTask | null>(null);
+    const [applyParamsTask, setApplyParamsTask] = useState<Task | TrashTask | null>(null);
+
+    // 已上传图片选择弹窗状态
+    const [uploadedImagesModalOpen, setUploadedImagesModalOpen] = useState(false);
+    const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
+    const [uploadedImagesLoading, setUploadedImagesLoading] = useState(false);
+    // 用于标识选择图片后应用到哪个位置：firstFrame(首帧)、lastFrame(尾帧)、reference(参考图)
+    const [uploadedImagesTarget, setUploadedImagesTarget] = useState<'firstFrame' | 'lastFrame' | 'reference'>('firstFrame');
 
     // 火山引擎专有参数
     const [volcRatio, setVolcRatio] = useState('16:9');
@@ -88,22 +114,43 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
     }, [caps]);
 
     useEffect(() => {
+        // 更新 ref 以便其他 useEffect 能访问到最新值
+        applyParamsRef.current = applyParams;
+    });
+
+    // 标记是否已应用过外部参数
+    const [appliedParams, setAppliedParams] = useState(false);
+
+    useEffect(() => {
         Promise.all([fetchProviderModels(), fetchProviders(), fetchSettings()])
             .then(([data, infos, settings]) => {
                 setProviderModels(data);
                 setProviderInfos(infos);
                 setAllSettings(settings);
-                const names = Object.keys(data).filter((p) => p !== 'mock');
-                if (names.length > 0 && !provider) {
-                    setProvider(names[0]);
-                    if (data[names[0]].length > 0) {
-                        const first = data[names[0]].find((m) => !m.disabled) ?? data[names[0]][0];
-                        setModel(first.id);
-                    }
-                }
             })
             .catch(() => setError('获取 Provider 列表失败'));
     }, []);
+
+    // 设置默认 provider（仅在没有待套用参数且尚未设置时）
+    useEffect(() => {
+        // 有待套用参数时不设置默认值
+        if (applyParams) return;
+        // 如果已经参数套用过，也不设置默认值
+        if (appliedParams) return;
+        // provider 已有值时不覆盖
+        if (provider) return;
+        // providerModels 未加载完成
+        if (Object.keys(providerModels).length === 0) return;
+        
+        const names = Object.keys(providerModels).filter((p) => p !== 'mock');
+        if (names.length > 0) {
+            setProvider(names[0]);
+            if (providerModels[names[0]].length > 0) {
+                const first = providerModels[names[0]].find((m) => !m.disabled) ?? providerModels[names[0]][0];
+                setModel(first.id);
+            }
+        }
+    }, [providerModels, applyParams, appliedParams, provider]);
 
     // 关闭下拉菜单（点击外部时）
     useEffect(() => {
@@ -155,6 +202,79 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
         setVolcReturnLastFrame(false);
         setVolcRefImages([]);
     };
+
+    // 应用参数到表单
+    const applyParamsToForm = (params: ApplyParams) => {
+        setProvider(params.provider);
+        setModel(params.model ?? '');
+        setPrompt(params.prompt);
+
+        // 处理首帧图片 - 本地上传的图片直接使用URL，链接的也使用原样
+        if (params.imageUrl) {
+            if (params.imageUrl.startsWith('/uploads/')) {
+                // 本地上传的图片，直接使用已上传的URL
+                setImageUrl(params.imageUrl);
+                setPreviewUrl(params.imageUrl);
+            } else if (params.imageUrl.startsWith('data:')) {
+                // base64图片
+                setImageUrl(params.imageUrl);
+                setPreviewUrl(params.imageUrl);
+            } else {
+                // 外部链接
+                setImageUrl(params.imageUrl);
+                setPreviewUrl(params.imageUrl);
+            }
+        } else {
+            setImageUrl('');
+            setPreviewUrl('');
+        }
+
+        // 应用额外参数
+        const extra = params.extraParams;
+        if (extra.ratio) setVolcRatio(extra.ratio as string);
+        if (extra.resolution) setVolcResolution(extra.resolution as string);
+        if (extra.duration !== undefined) {
+            if (extra.duration === -1) {
+                setVolcAutoDuration(true);
+            } else {
+                setVolcDuration(String(extra.duration));
+                setVolcAutoDuration(false);
+            }
+        }
+        if (extra.generateAudio !== undefined) setVolcGenerateAudio(extra.generateAudio as boolean);
+        if (extra.seed !== undefined) setVolcSeed(String(extra.seed));
+        if (extra.watermark !== undefined) setVolcWatermark(extra.watermark as boolean);
+        if (extra.cameraFixed !== undefined) setVolcCameraFixed(extra.cameraFixed as boolean);
+        if (extra.serviceTier !== undefined) setVolcServiceTier(extra.serviceTier as 'default' | 'flex');
+        if (extra.draft !== undefined) setVolcDraft(extra.draft as boolean);
+        if (extra.returnLastFrame !== undefined) setVolcReturnLastFrame(extra.returnLastFrame as boolean);
+
+        // 处理尾帧图片
+        if (extra.lastFrameImageUrl) {
+            const lastFrameUrl = extra.lastFrameImageUrl as string;
+            setVolcLastFrameUrl(lastFrameUrl);
+            setVolcLastFramePreview(lastFrameUrl.startsWith('/uploads/') || lastFrameUrl.startsWith('data:') ? lastFrameUrl : lastFrameUrl);
+            setVolcImageMode('first_last_frame');
+        } else if (params.imageUrl) {
+            setVolcImageMode('first_frame');
+        }
+
+        // 处理参考图片
+        if (extra.referenceImageUrls && Array.isArray(extra.referenceImageUrls)) {
+            const urls = extra.referenceImageUrls as string[];
+            setVolcRefImages(urls.map(url => ({ url, preview: url })));
+            setVolcImageMode('reference');
+        }
+    };
+
+    // 监听外部传入的applyParams
+    useEffect(() => {
+        if (applyParams && Object.keys(providerModels).length > 0) {
+            applyParamsToForm(applyParams);
+            setAppliedParams(true);
+            onApplyParamsConsumed?.();
+        }
+    }, [applyParams, providerModels]);
 
     const handleProviderChange = (name: string) => {
         setProvider(name);
@@ -217,6 +337,53 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
         } finally {
             setUploadingLastFrame(false);
         }
+    };
+
+    // 打开套用参数弹窗
+    const handleOpenApplyModal = async () => {
+        setApplyModalOpen(true);
+        setApplyModalLoading(true);
+        try {
+            const [tasks, trash] = await Promise.all([fetchTasks(), fetchTrashTasks()]);
+            setApplyTasks(tasks);
+            setApplyTrashTasks(trash);
+        } catch {
+            // 忽略错误
+        } finally {
+            setApplyModalLoading(false);
+        }
+    };
+
+    // 打开已上传图片选择弹窗
+    const handleOpenUploadedImages = async (target: 'firstFrame' | 'lastFrame' | 'reference') => {
+        setUploadedImagesTarget(target);
+        setUploadedImagesModalOpen(true);
+        setUploadedImagesLoading(true);
+        try {
+            const images = await fetchUploadedImages();
+            setUploadedImages(images);
+        } catch {
+            // 忽略错误
+        } finally {
+            setUploadedImagesLoading(false);
+        }
+    };
+
+    // 选择已上传的图片
+    const handleSelectUploadedImage = (image: UploadedImage) => {
+        if (uploadedImagesTarget === 'firstFrame') {
+            setImageUrl(image.url);
+            setPreviewUrl(image.url);
+        } else if (uploadedImagesTarget === 'lastFrame') {
+            setVolcLastFrameUrl(image.url);
+            setVolcLastFramePreview(image.url);
+        } else if (uploadedImagesTarget === 'reference') {
+            // 添加到参考图列表（最多4张）
+            if (volcRefImages.length < 4) {
+                setVolcRefImages([...volcRefImages, { url: image.url, preview: image.url }]);
+            }
+        }
+        setUploadedImagesModalOpen(false);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -445,15 +612,15 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                 <div className="flex gap-2 items-center">
                                     <Input
                                         value={
-                                            imageUrl.startsWith('data:')
-                                                ? '(已上传本地图片)'
+                                            imageUrl.startsWith('data:') || imageUrl.startsWith('/uploads/')
+                                                ? '(已选择图片)'
                                                 : imageUrl
                                         }
                                         onChange={(e) => {
                                             setImageUrl(e.target.value);
                                             setPreviewUrl('');
                                         }}
-                                        readOnly={imageUrl.startsWith('data:')}
+                                        readOnly={imageUrl.startsWith('data:') || imageUrl.startsWith('/uploads/')}
                                         placeholder="输入图片 URL 或上传本地图片"
                                     />
                                     <label
@@ -475,6 +642,15 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                             className="hidden"
                                         />
                                     </label>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleOpenUploadedImages('firstFrame')}
+                                        className="shrink-0 whitespace-nowrap"
+                                    >
+                                        选择已上传
+                                    </Button>
                                 </div>
                                 {(previewUrl ||
                                     (imageUrl &&
@@ -511,15 +687,15 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                 <div className="flex gap-2 items-center">
                                     <Input
                                         value={
-                                            volcLastFrameUrl.startsWith('data:')
-                                                ? '(已上传本地图片)'
+                                            volcLastFrameUrl.startsWith('data:') || volcLastFrameUrl.startsWith('/uploads/')
+                                                ? '(已选择图片)'
                                                 : volcLastFrameUrl
                                         }
                                         onChange={(e) => {
                                             setVolcLastFrameUrl(e.target.value);
                                             setVolcLastFramePreview('');
                                         }}
-                                        readOnly={volcLastFrameUrl.startsWith('data:')}
+                                        readOnly={volcLastFrameUrl.startsWith('data:') || volcLastFrameUrl.startsWith('/uploads/')}
                                         placeholder="输入尾帧图片 URL 或上传本地图片"
                                     />
                                     <label
@@ -540,6 +716,15 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                             className="hidden"
                                         />
                                     </label>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleOpenUploadedImages('lastFrame')}
+                                        className="shrink-0 whitespace-nowrap"
+                                    >
+                                        选择已上传
+                                    </Button>
                                 </div>
                                 {(volcLastFramePreview || (volcLastFrameUrl && !volcLastFrameUrl.startsWith('data:'))) && (
                                     <div className="flex items-center gap-3 mt-2">
@@ -599,38 +784,49 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                                 )}
                                 {/* 添加按钮 */}
                                 {volcRefImages.length < 4 && (
-                                    <label
-                                        className={cn(
-                                            'inline-flex items-center justify-center h-10 px-4 text-sm rounded-md border border-dashed border-input',
-                                            'bg-transparent cursor-pointer transition-colors duration-200',
-                                            'hover:bg-accent hover:text-accent-foreground',
-                                            uploadingRefImage && 'opacity-50 pointer-events-none',
-                                        )}
-                                    >
-                                        <Upload className="h-4 w-4 mr-1.5" />
-                                        {uploadingRefImage ? '上传中...' : '添加参考图'}
-                                        <input
-                                            type="file"
-                                            accept="image/png,image/jpeg,image/gif,image/webp"
-                                            onChange={async (e) => {
-                                                const file = e.target.files?.[0];
-                                                if (!file) return;
-                                                setUploadingRefImage(true);
-                                                setError('');
-                                                try {
-                                                    const result = await uploadImage(file);
-                                                    setVolcRefImages(prev => [...prev, { url: result.base64, preview: result.url }]);
-                                                } catch (err) {
-                                                    setError((err as Error).message);
-                                                } finally {
-                                                    setUploadingRefImage(false);
-                                                    e.target.value = '';
-                                                }
-                                            }}
-                                            disabled={uploadingRefImage}
-                                            className="hidden"
-                                        />
-                                    </label>
+                                    <div className="flex gap-2">
+                                        <label
+                                            className={cn(
+                                                'inline-flex items-center justify-center h-10 px-4 text-sm rounded-md border border-dashed border-input',
+                                                'bg-transparent cursor-pointer transition-colors duration-200',
+                                                'hover:bg-accent hover:text-accent-foreground',
+                                                uploadingRefImage && 'opacity-50 pointer-events-none',
+                                            )}
+                                        >
+                                            <Upload className="h-4 w-4 mr-1.5" />
+                                            {uploadingRefImage ? '上传中...' : '添加参考图'}
+                                            <input
+                                                type="file"
+                                                accept="image/png,image/jpeg,image/gif,image/webp"
+                                                onChange={async (e) => {
+                                                    const file = e.target.files?.[0];
+                                                    if (!file) return;
+                                                    setUploadingRefImage(true);
+                                                    setError('');
+                                                    try {
+                                                        const result = await uploadImage(file);
+                                                        setVolcRefImages(prev => [...prev, { url: result.base64, preview: result.url }]);
+                                                    } catch (err) {
+                                                        setError((err as Error).message);
+                                                    } finally {
+                                                        setUploadingRefImage(false);
+                                                        e.target.value = '';
+                                                    }
+                                                }}
+                                                disabled={uploadingRefImage}
+                                                className="hidden"
+                                            />
+                                        </label>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => handleOpenUploadedImages('reference')}
+                                            className="shrink-0 whitespace-nowrap"
+                                        >
+                                            选择已上传
+                                        </Button>
+                                    </div>
                                 )}
                                 <p className="text-xs text-muted-foreground">
                                     提示词中可用 [图1]、[图2] 等指定图片，如："[图1]的人物走在[图2]的街道上"
@@ -854,17 +1050,631 @@ export function CreateTaskForm({ onCreated }: { onCreated: () => void }) {
                             </div>
                         )}
 
-                        <Button
-                            type="submit"
-                            className="w-full"
-                            disabled={submitting || !prompt.trim() || missingSettings.length > 0}
-                        >
-                            <Sparkles className="h-4 w-4 mr-2" />
-                            {submitting ? '提交中...' : '创建任务'}
-                        </Button>
+                        <div className="flex gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handleOpenApplyModal}
+                            >
+                                <ClipboardPaste className="h-4 w-4 mr-2" />
+                                套用参数
+                            </Button>
+                            <Button
+                                type="submit"
+                                className="flex-1"
+                                disabled={submitting || !prompt.trim() || missingSettings.length > 0}
+                            >
+                                <Sparkles className="h-4 w-4 mr-2" />
+                                {submitting ? '提交中...' : '创建任务'}
+                            </Button>
+                        </div>
                     </form>
                 </CardContent>
             </Card>
+
+            {/* 套用参数弹窗 */}
+            {applyModalOpen && (
+                <ApplyParamsModal
+                    tab={applyModalTab}
+                    onTabChange={setApplyModalTab}
+                    tasks={applyTasks}
+                    trashTasks={applyTrashTasks}
+                    loading={applyModalLoading}
+                    onClose={() => setApplyModalOpen(false)}
+                    onApply={(task) => {
+                        const params: ApplyParams = {
+                            provider: task.provider,
+                            model: task.model,
+                            prompt: task.prompt,
+                            imageUrl: task.image_url,
+                            extraParams: task.extra_params ? JSON.parse(task.extra_params) : {},
+                        };
+                        applyParamsToForm(params);
+                        setApplyModalOpen(false);
+                    }}
+                    onPreview={setApplyPreviewTask}
+                    onShowParams={setApplyParamsTask}
+                    providerInfos={providerInfos}
+                    modelDisplayNames={Object.fromEntries(
+                        Object.values(providerModels).flat().map(m => [m.id, m.displayName])
+                    )}
+                />
+            )}
+
+            {/* 套用弹窗中的视频预览 */}
+            {applyPreviewTask && applyPreviewTask.result_url && (
+                <ApplyVideoPreviewOverlay
+                    task={applyPreviewTask}
+                    onClose={() => setApplyPreviewTask(null)}
+                    providerInfos={providerInfos}
+                    modelDisplayNames={Object.fromEntries(
+                        Object.values(providerModels).flat().map(m => [m.id, m.displayName])
+                    )}
+                />
+            )}
+
+            {/* 套用弹窗中的参数详情 */}
+            {applyParamsTask && (
+                <ApplyParamsDetailModal
+                    task={applyParamsTask}
+                    onClose={() => setApplyParamsTask(null)}
+                    providerInfos={providerInfos}
+                    modelDisplayNames={Object.fromEntries(
+                        Object.values(providerModels).flat().map(m => [m.id, m.displayName])
+                    )}
+                />
+            )}
+
+            {/* 已上传图片选择弹窗 */}
+            {uploadedImagesModalOpen && (
+                <UploadedImagesModal
+                    images={uploadedImages}
+                    loading={uploadedImagesLoading}
+                    onClose={() => setUploadedImagesModalOpen(false)}
+                    onSelect={handleSelectUploadedImage}
+                    target={uploadedImagesTarget}
+                />
+            )}
+        </div>
+    );
+}
+
+// ── 参数显示名映射 ──────────────────────────
+const PARAM_LABELS: Record<string, string> = {
+    ratio: '宽高比',
+    resolution: '分辨率',
+    duration: '时长(秒)',
+    seed: '种子',
+    watermark: '水印',
+    generateAudio: '生成音频',
+    cameraFixed: '固定镜头',
+    returnLastFrame: '返回尾帧',
+    serviceTier: '服务等级',
+    draft: '样片模式',
+    lastFrameImageUrl: '尾帧图片',
+    referenceImageUrls: '参考图片',
+};
+
+function formatParamValue(key: string, value: unknown): string {
+    if (typeof value === 'boolean') return value ? '是' : '否';
+    if (key === 'duration' && value === -1) return '自动';
+    if (key === 'seed' && value === -1) return '随机';
+    if (key === 'serviceTier') return value === 'flex' ? '离线推理' : '在线推理';
+    if (key === 'lastFrameImageUrl' || key === 'referenceImageUrls') return '';
+    if (Array.isArray(value)) return value.length + ' 张';
+    if (typeof value === 'string' && value.startsWith('data:')) return '(本地上传)';
+    return String(value);
+}
+
+// 图片预览链接组件
+function ImagePreviewLink({ url, label }: { url: string; label: string }) {
+    const handleClick = () => {
+        window.open(url, '_blank');
+    };
+
+    return (
+        <button
+            onClick={handleClick}
+            className="inline-flex items-center gap-1 font-medium text-primary hover:underline cursor-pointer"
+        >
+            <ImageIcon className="h-3.5 w-3.5" />
+            {label}
+            <ExternalLink className="h-3 w-3" />
+        </button>
+    );
+}
+
+// 参考图片列表预览组件
+function ReferenceImagesPreview({ urls }: { urls: string[] }) {
+    return (
+        <div className="flex flex-wrap gap-1">
+            {urls.map((url, index) => (
+                <ImagePreviewLink
+                    key={index}
+                    url={url}
+                    label={`图${index + 1}`}
+                />
+            ))}
+        </div>
+    );
+}
+
+type BadgeVariant = 'warning' | 'default' | 'success' | 'destructive';
+
+const STATUS_CONFIG: Record<
+    string,
+    { label: string; variant: BadgeVariant }
+> = {
+    pending: { label: '等待中', variant: 'warning' },
+    running: { label: '生成中', variant: 'default' },
+    success: { label: '已完成', variant: 'success' },
+    failed: { label: '失败', variant: 'destructive' },
+};
+
+// 套用参数弹窗
+function ApplyParamsModal({
+    tab,
+    onTabChange,
+    tasks,
+    trashTasks,
+    loading,
+    onClose,
+    onApply,
+    onPreview,
+    onShowParams,
+    providerInfos,
+    modelDisplayNames,
+}: {
+    tab: 'tasks' | 'trash';
+    onTabChange: (tab: 'tasks' | 'trash') => void;
+    tasks: Task[];
+    trashTasks: TrashTask[];
+    loading: boolean;
+    onClose: () => void;
+    onApply: (task: Task | TrashTask) => void;
+    onPreview: (task: Task | TrashTask) => void;
+    onShowParams: (task: Task | TrashTask) => void;
+    providerInfos: ProviderInfo[];
+    modelDisplayNames: Record<string, string>;
+}) {
+    const displayTasks = tab === 'tasks' ? tasks : trashTasks;
+
+    const getProviderDisplayName = (name: string) => {
+        const info = providerInfos.find(p => p.name === name);
+        return info?.displayName ?? name;
+    };
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+            onClick={onClose}
+        >
+            <div
+                className="relative w-full max-w-2xl mx-4 rounded-xl border border-border bg-card shadow-2xl overflow-hidden max-h-[80vh] flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
+                    <div className="flex items-center gap-4">
+                        <p className="text-sm font-medium">选择任务套用参数</p>
+                        <div className="flex gap-1">
+                            <button
+                                onClick={() => onTabChange('tasks')}
+                                className={cn(
+                                    'px-3 py-1 text-xs rounded-md transition-colors',
+                                    tab === 'tasks'
+                                        ? 'bg-primary/15 text-primary'
+                                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                                )}
+                            >
+                                任务列表
+                            </button>
+                            <button
+                                onClick={() => onTabChange('trash')}
+                                className={cn(
+                                    'px-3 py-1 text-xs rounded-md transition-colors',
+                                    tab === 'trash'
+                                        ? 'bg-primary/15 text-primary'
+                                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                                )}
+                            >
+                                回收站
+                            </button>
+                        </div>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={onClose}
+                        className="shrink-0"
+                    >
+                        <X className="h-5 w-5" />
+                    </Button>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-auto p-4">
+                    {loading ? (
+                        <div className="flex items-center justify-center py-12 text-muted-foreground">
+                            <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
+                        </div>
+                    ) : displayTasks.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                            <p className="text-sm">暂无任务</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            {displayTasks.map((task) => (
+                                <div
+                                    key={task.id}
+                                    className="p-3 rounded-lg border border-border hover:border-primary/30 transition-colors"
+                                >
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                                                <span className={cn(
+                                                    'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
+                                                    STATUS_CONFIG[task.status]?.variant === 'success' && 'bg-green-500/10 text-green-500',
+                                                    STATUS_CONFIG[task.status]?.variant === 'destructive' && 'bg-red-500/10 text-red-500',
+                                                    STATUS_CONFIG[task.status]?.variant === 'warning' && 'bg-amber-500/10 text-amber-500',
+                                                    STATUS_CONFIG[task.status]?.variant === 'default' && 'bg-blue-500/10 text-blue-500',
+                                                )}>
+                                                    {STATUS_CONFIG[task.status]?.label ?? task.status}
+                                                </span>
+                                                <span className="text-xs text-muted-foreground">
+                                                    {getProviderDisplayName(task.provider)}
+                                                    {task.model ? ` · ${modelDisplayNames[task.model] ?? task.model}` : ''}
+                                                </span>
+                                            </div>
+                                            <p className="text-sm truncate">{task.prompt}</p>
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            {task.status === 'success' && task.result_url && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => onPreview(task)}
+                                                    className="text-muted-foreground"
+                                                >
+                                                    <Play className="h-3.5 w-3.5" />
+                                                </Button>
+                                            )}
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => onShowParams(task)}
+                                                className="text-muted-foreground"
+                                            >
+                                                <Info className="h-3.5 w-3.5" />
+                                            </Button>
+                                            <Button
+                                                variant="default"
+                                                size="sm"
+                                                onClick={() => onApply(task)}
+                                            >
+                                                套用
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// 套用弹窗中的视频预览
+function ApplyVideoPreviewOverlay({
+    task,
+    onClose,
+    providerInfos,
+    modelDisplayNames,
+}: {
+    task: Task | TrashTask;
+    onClose: () => void;
+    providerInfos: ProviderInfo[];
+    modelDisplayNames: Record<string, string>;
+}) {
+    const getProviderDisplayName = (name: string) => {
+        const info = providerInfos.find(p => p.name === name);
+        return info?.displayName ?? name;
+    };
+
+    return (
+        <div
+            className="fixed inset-0 z-60 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+            onClick={onClose}
+        >
+            <div
+                className="relative w-full max-w-4xl max-h-[90vh] mx-4 rounded-xl border border-border bg-card shadow-2xl overflow-auto"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                            #{task.id} · {getProviderDisplayName(task.provider)}
+                            {task.model ? ` · ${modelDisplayNames[task.model] ?? task.model}` : ''}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">
+                            {task.prompt}
+                        </p>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={onClose}
+                        className="shrink-0 ml-3"
+                    >
+                        <X className="h-5 w-5" />
+                    </Button>
+                </div>
+
+                {/* Video */}
+                <div className="p-5">
+                    <video
+                        src={task.result_url!}
+                        controls
+                        autoPlay
+                        className="w-full max-h-[70vh] rounded-lg object-contain"
+                    />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// 套用弹窗中的参数详情
+function ApplyParamsDetailModal({
+    task,
+    onClose,
+    providerInfos,
+    modelDisplayNames,
+}: {
+    task: Task | TrashTask;
+    onClose: () => void;
+    providerInfos: ProviderInfo[];
+    modelDisplayNames: Record<string, string>;
+}) {
+    const params: Record<string, unknown> = (() => {
+        try {
+            return task.extra_params ? JSON.parse(task.extra_params) : {};
+        } catch {
+            return {};
+        }
+    })();
+
+    const entries = Object.entries(params);
+
+    const getProviderDisplayName = (name: string) => {
+        const info = providerInfos.find(p => p.name === name);
+        return info?.displayName ?? name;
+    };
+
+    return (
+        <div
+            className="fixed inset-0 z-60 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+            onClick={onClose}
+        >
+            <div
+                className="relative w-full max-w-md mx-4 rounded-xl border border-border bg-card shadow-2xl overflow-auto max-h-[80vh]"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                            #{task.id} · {getProviderDisplayName(task.provider)}
+                            {task.model ? ` · ${modelDisplayNames[task.model] ?? task.model}` : ''}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">任务参数详情</p>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={onClose}
+                        className="shrink-0 ml-3"
+                    >
+                        <X className="h-5 w-5" />
+                    </Button>
+                </div>
+
+                {/* 基础信息 */}
+                <div className="px-5 pt-4 space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">平台</span>
+                        <span className="font-medium">{getProviderDisplayName(task.provider)}</span>
+                    </div>
+                    {task.model && (
+                        <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">模型</span>
+                            <span className="font-medium">{modelDisplayNames[task.model] ?? task.model}</span>
+                        </div>
+                    )}
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">状态</span>
+                        <span className="font-medium">{STATUS_CONFIG[task.status]?.label ?? task.status}</span>
+                    </div>
+                    {task.image_url && (
+                        <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">首帧图片</span>
+                            <ImagePreviewLink
+                                url={task.image_url}
+                                label={task.image_url.startsWith('data:') || task.image_url.startsWith('/uploads/') ? '本地上传' : 'URL'}
+                            />
+                        </div>
+                    )}
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">创建时间</span>
+                        <span className="font-medium">{new Date(task.created_at + 'Z').toLocaleString()}</span>
+                    </div>
+                </div>
+
+                {/* 额外参数 */}
+                {entries.length > 0 && (
+                    <div className="px-5 pt-3 space-y-2">
+                        <p className="text-xs text-muted-foreground font-medium">生成参数</p>
+                        {entries.map(([key, value]) => {
+                            // 处理图片类参数
+                            if (key === 'lastFrameImageUrl' && typeof value === 'string') {
+                                return (
+                                    <div key={key} className="flex items-center justify-between text-sm">
+                                        <span className="text-muted-foreground">{PARAM_LABELS[key]}</span>
+                                        <ImagePreviewLink
+                                            url={value}
+                                            label={value.startsWith('data:') || value.startsWith('/uploads/') ? '本地上传' : 'URL'}
+                                        />
+                                    </div>
+                                );
+                            }
+                            if (key === 'referenceImageUrls' && Array.isArray(value)) {
+                                return (
+                                    <div key={key} className="flex items-center justify-between text-sm">
+                                        <span className="text-muted-foreground">{PARAM_LABELS[key]}</span>
+                                        <ReferenceImagesPreview urls={value as string[]} />
+                                    </div>
+                                );
+                            }
+                            // 普通参数
+                            return (
+                                <div key={key} className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">
+                                        {PARAM_LABELS[key] ?? key}
+                                    </span>
+                                    <span className="font-medium">
+                                        {formatParamValue(key, value)}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* Prompt */}
+                <div className="px-5 py-4 border-t border-border mt-3">
+                    <p className="text-xs text-muted-foreground mb-1">Prompt</p>
+                    <p className="text-sm leading-relaxed">{task.prompt}</p>
+                </div>
+
+                {/* 错误信息 */}
+                {task.error_message && (
+                    <div className="px-5 pb-4">
+                        <p className="text-xs text-muted-foreground mb-1">错误信息</p>
+                        <p className="text-sm text-destructive">{task.error_message}</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// 格式化文件大小
+function formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+}
+
+// 已上传图片选择弹窗
+function UploadedImagesModal({
+    images,
+    loading,
+    onClose,
+    onSelect,
+    target,
+}: {
+    images: UploadedImage[];
+    loading: boolean;
+    onClose: () => void;
+    onSelect: (image: UploadedImage) => void;
+    target: 'firstFrame' | 'lastFrame' | 'reference';
+}) {
+    const targetLabel = {
+        firstFrame: '首帧图片',
+        lastFrame: '尾帧图片',
+        reference: '参考图片',
+    }[target];
+
+    // 跟踪加载失败的图片
+    const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
+
+    const handleImageError = (url: string) => {
+        setFailedImages(prev => new Set(prev).add(url));
+    };
+
+    // 过滤掉加载失败的图片
+    const validImages = images.filter(img => !failedImages.has(img.url));
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+            onClick={onClose}
+        >
+            <div
+                className="relative w-full max-w-2xl mx-4 rounded-xl border border-border bg-card shadow-2xl overflow-hidden max-h-[80vh] flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
+                    <div>
+                        <p className="text-sm font-medium">选择已上传的图片</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            用于 {targetLabel}
+                            {failedImages.size > 0 && ` (已过滤 ${failedImages.size} 个无效图片)`}
+                        </p>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={onClose}
+                        className="shrink-0"
+                    >
+                        <X className="h-5 w-5" />
+                    </Button>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-auto p-4">
+                    {loading ? (
+                        <div className="flex items-center justify-center py-12 text-muted-foreground">
+                            <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
+                        </div>
+                    ) : validImages.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                            <p className="text-sm">暂无可用的图片</p>
+                            <p className="text-xs mt-1">上传过的图片会在这里显示</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                            {images.map((image) => (
+                                <button
+                                    key={image.url}
+                                    onClick={() => onSelect(image)}
+                                    className={cn(
+                                        "group relative aspect-square rounded-lg overflow-hidden border border-border hover:border-primary transition-colors",
+                                        failedImages.has(image.url) && "hidden"
+                                    )}
+                                >
+                                    <img
+                                        src={image.url}
+                                        alt={image.filename}
+                                        className="w-full h-full object-cover"
+                                        onError={() => handleImageError(image.url)}
+                                    />
+                                    <div className="absolute inset-0 bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2">
+                                        <p className="text-xs font-medium truncate w-full text-center">{image.filename}</p>
+                                        <p className="text-xs text-muted-foreground">{formatFileSize(image.size)}</p>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 }

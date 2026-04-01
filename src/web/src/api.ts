@@ -107,6 +107,7 @@ export interface ProviderSettings {
     displayName: string;
     schema: ProviderSettingSchema[];
     values: Record<string, string>;
+    sources: Record<string, 'env' | 'saved' | 'none'>;
     supportsModelRefresh?: boolean;
     modelsUpdatedAt?: string;
 }
@@ -194,4 +195,38 @@ export async function purgeTask(id: number): Promise<void> {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || '彻底删除任务失败');
     }
+}
+
+export async function restoreTask(id: number): Promise<Task> {
+    const res = await fetch(`${BASE}/trash/${id}/restore`, { method: 'POST' });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '恢复任务失败');
+    }
+    return res.json();
+}
+
+// ── 已上传图片相关 ──────────────────────────
+
+export interface UploadedImage {
+    url: string;
+    filename: string;
+    size: number;
+    createdAt: string;
+}
+
+export async function fetchUploadedImages(): Promise<UploadedImage[]> {
+    const res = await fetch(`${BASE}/uploads`);
+    if (!res.ok) throw new Error('获取已上传图片列表失败');
+    return res.json();
+}
+
+// ── 参数套用相关类型 ──────────────────────────
+
+export interface ApplyParams {
+    provider: string;
+    model: string | null;
+    prompt: string;
+    imageUrl: string | null;
+    extraParams: Record<string, unknown>;
 }

@@ -183,6 +183,45 @@ export interface PurgeResult {
     filesToDelete?: string[];
 }
 
+/**
+ * 检查图片URL是否被其他未删除（或未彻底删除）的任务使用
+ * @param imageUrl 图片URL
+ * @param excludeTaskId 要排除的任务ID（正在删除的任务本身）
+ * @returns 是否被使用
+ */
+function isImageUsedByOtherTasks(imageUrl: string, excludeTaskId: number): boolean {
+    const db = getDb();
+    
+    // 检查image_url字段（首帧图片）
+    const imageUrlUsage = db.prepare(`
+        SELECT COUNT(*) as count FROM tasks 
+        WHERE id != ? AND purged_at IS NULL AND image_url = ?
+    `).get(excludeTaskId, imageUrl) as { count: number };
+    
+    if (imageUrlUsage.count > 0) return true;
+    
+    // 检查extra_params中的图片（lastFrameImageUrl和referenceImageUrls）
+    // 获取所有未彻底删除的任务的extra_params
+    const tasks = db.prepare(`
+        SELECT extra_params FROM tasks 
+        WHERE id != ? AND purged_at IS NULL AND extra_params IS NOT NULL
+    `).all(excludeTaskId) as { extra_params: string }[];
+    
+    for (const row of tasks) {
+        try {
+            const params = JSON.parse(row.extra_params);
+            // 检查lastFrameImageUrl
+            if (params.lastFrameImageUrl === imageUrl) return true;
+            // 检查referenceImageUrls
+            if (Array.isArray(params.referenceImageUrls) && params.referenceImageUrls.includes(imageUrl)) return true;
+        } catch {
+            // 解析失败忽略
+        }
+    }
+    
+    return false;
+}
+
 /** 彻底删除回收站中的任务（需已删除超过30天） */
 export function purgeTask(id: number): PurgeResult {
     const db = getDb();
@@ -202,19 +241,60 @@ export function purgeTask(id: number): PurgeResult {
         return { success: false, error: `任务删除未满30天（已${Math.floor(diffDays)}天），无法彻底删除` };
     }
 
-    // 收集需要清理的本地文件
+    // 收集需要清理的本地文件，同时检查是否被其他任务使用
     const filesToDelete: string[] = [];
+    
+    // 检查首帧图片
     if (task.image_url && (task.image_url.startsWith('/uploads/') || task.image_url.startsWith('/uploads\\'))) {
-        filesToDelete.push(task.image_url);
+        if (!isImageUsedByOtherTasks(task.image_url, id)) {
+            filesToDelete.push(task.image_url);
+        }
     }
+    
+    // 检查result_url（视频文件通常不会被复用，直接删除）
     if (task.result_url && (task.result_url.startsWith('/videos/') || task.result_url.startsWith('/videos\\'))) {
         filesToDelete.push(task.result_url);
+    }
+    
+    // 检查extra_params中的图片
+    if (task.extra_params) {
+        try {
+            const params = JSON.parse(task.extra_params);
+            // 检查lastFrameImageUrl
+            if (params.lastFrameImageUrl && 
+                (params.lastFrameImageUrl.startsWith('/uploads/') || params.lastFrameImageUrl.startsWith('/uploads\\'))) {
+                if (!isImageUsedByOtherTasks(params.lastFrameImageUrl, id)) {
+                    filesToDelete.push(params.lastFrameImageUrl);
+                }
+            }
+            // 检查referenceImageUrls
+            if (Array.isArray(params.referenceImageUrls)) {
+                for (const url of params.referenceImageUrls) {
+                    if (url && (url.startsWith('/uploads/') || url.startsWith('/uploads\\'))) {
+                        if (!isImageUsedByOtherTasks(url, id)) {
+                            filesToDelete.push(url);
+                        }
+                    }
+                }
+            }
+        } catch {
+            // 解析失败忽略
+        }
     }
 
     // 标记为已彻底删除
     db.prepare("UPDATE tasks SET purged_at = datetime('now') WHERE id = ?").run(id);
 
     return { success: true, filesToDelete };
+}
+
+/** 恢复回收站中的任务 */
+export function restoreTask(id: number): boolean {
+    const db = getDb();
+    const result = db.prepare(
+        "UPDATE tasks SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL AND purged_at IS NULL"
+    ).run(id);
+    return result.changes > 0;
 }
 
 /** 读取一条设置 */

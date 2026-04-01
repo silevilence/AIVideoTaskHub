@@ -7,12 +7,13 @@ import { SiliconFlowProvider } from './providers/siliconflow-provider.js';
 import { VolcEngineProvider } from './providers/volcengine-provider.js';
 import { AIHubMixProvider } from './providers/aihubmix-provider.js';
 import { TaskPoller } from './task-poller.js';
+import { logger } from './logger.js';
 
 const PORT = process.env.PORT || 3000;
 
 // 初始化数据库
 initDb();
-console.log('[server] database initialized');
+logger.info('数据库初始化完成');
 
 // 初始化 Provider 注册表
 const registry = new ProviderRegistry();
@@ -53,11 +54,11 @@ for (const name of registry.listNames()) {
 
   if (Object.keys(saved).length > 0) {
     provider.applySettings(saved);
-    console.log(`[server] loaded saved settings for provider: ${name}`);
+    logger.info(`已加载 Provider 保存的设置: ${name}`);
   }
 }
 
-console.log(`[server] registered providers: ${registry.listNames().join(', ')}`);
+logger.info(`已注册的 Provider: ${registry.listNames().join(', ')}`);
 
 // 自动刷新过期的动态模型列表
 (async () => {
@@ -65,7 +66,7 @@ console.log(`[server] registered providers: ${registry.listNames().join(', ')}`)
     const provider = registry.get(name);
     if (!provider?.needsModelRefresh?.()) continue;
     try {
-      console.log(`[server] refreshing models for ${name}...`);
+      logger.info(`正在刷新 ${name} 的模型列表...`);
       await provider.refreshModels!();
       const cacheData = provider.getCacheData?.();
       if (cacheData) {
@@ -73,9 +74,9 @@ console.log(`[server] registered providers: ${registry.listNames().join(', ')}`)
           setSetting(`provider:${name}:${key}`, value);
         }
       }
-      console.log(`[server] refreshed models for ${name}`);
+      logger.info(`${name} 模型列表刷新完成`);
     } catch (err) {
-      console.error(`[server] failed to refresh models for ${name}:`, err);
+      logger.error(`${name} 模型列表刷新失败: ${err}`);
     }
   }
 })();
@@ -87,11 +88,12 @@ const poller = new TaskPoller({
   maxRetries: Number(process.env.MAX_RETRIES) || 3,
 });
 poller.start();
+logger.pollerStarted();
 
 export { registry, poller };
 
 const app = createApp(registry);
 
 app.listen(PORT, () => {
-  console.log(`[server] running at http://localhost:${PORT}`);
+  logger.serverStarted(Number(PORT));
 });

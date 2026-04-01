@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- 渐变定义 -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1"/>
+      <stop offset="50%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#a855f7"/>
+    </linearGradient>
+    <linearGradient id="playGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff"/>
+      <stop offset="100%" style="stop-color:#e0e7ff"/>
+    </linearGradient>
+    <linearGradient id="sparkGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#fbbf24"/>
+      <stop offset="100%" style="stop-color:#f59e0b"/>
+    </linearGradient>
+    <!-- 阴影效果 -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#6366f1" flood-opacity="0.4"/>
+    </filter>
+    <filter id="innerGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- 圆角矩形背景 -->
+  <rect x="32" y="32" width="448" height="448" rx="80" ry="80" fill="url(#bgGradient)" filter="url(#shadow)"/>
+  
+  <!-- 装饰性圆环（代表AI处理/循环） -->
+  <circle cx="256" cy="256" r="160" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="24"/>
+  <circle cx="256" cy="256" r="160" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="6" stroke-dasharray="30 20"/>
+  
+  <!-- 视频播放三角形（中心） -->
+  <g filter="url(#innerGlow)">
+    <path d="M 200 140 L 340 256 L 200 372 Z" fill="url(#playGradient)" opacity="0.95">
+      <animate attributeName="opacity" values="0.95;1;0.95" dur="2s" repeatCount="indefinite"/>
+    </path>
+  </g>
+  
+  <!-- AI 星火效果（代表AI生成） -->
+  <g fill="url(#sparkGradient)">
+    <!-- 右上星星 -->
+    <path d="M 380 100 L 388 116 L 404 120 L 388 124 L 380 140 L 372 124 L 356 120 L 372 116 Z">
+      <animate attributeName="transform" attributeType="XML" type="scale" values="1;1.2;1" dur="1.5s" repeatCount="indefinite" additive="sum"/>
+      <animate attributeName="opacity" values="1;0.7;1" dur="1.5s" repeatCount="indefinite"/>
+    </path>
+    <!-- 左上小星星 -->
+    <path d="M 130 80 L 135 90 L 145 93 L 135 96 L 130 106 L 125 96 L 115 93 L 125 90 Z">
+      <animate attributeName="transform" attributeType="XML" type="scale" values="1;1.3;1" dur="2s" repeatCount="indefinite" additive="sum" begin="0.5s"/>
+      <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+    </path>
+    <!-- 右下小星星 -->
+    <path d="M 420 380 L 426 392 L 438 396 L 426 400 L 420 412 L 414 400 L 402 396 L 414 392 Z">
+      <animate attributeName="transform" attributeType="XML" type="scale" values="1;1.2;1" dur="1.8s" repeatCount="indefinite" additive="sum" begin="0.3s"/>
+      <animate attributeName="opacity" values="0.9;1;0.9" dur="1.8s" repeatCount="indefinite" begin="0.3s"/>
+    </path>
+  </g>
+  
+  <!-- 进度弧线（代表任务进度/异步处理） -->
+  <path d="M 256 76 A 180 180 0 0 1 436 256" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="8" stroke-linecap="round">
+    <animateTransform attributeName="transform" attributeType="XML" type="rotate" from="0 256 256" to="360 256 256" dur="8s" repeatCount="indefinite"/>
+  </path>
+  
+  <!-- 底部文字"AI" -->
+  <text x="256" y="440" text-anchor="middle" font-family="Arial, sans-serif" font-size="36" font-weight="bold" fill="rgba(255,255,255,0.8)" letter-spacing="4">AI VIDEO</text>
+</svg>
