@@ -2,10 +2,11 @@
 
 ## 📅 计划中
 
-- [ ] **[P2] 用户体验增强**
-    - [ ] 回收站增加任务状态中类似的筛选，并额外增加删除时间的筛选条件
-
 ## 🚧 开发中
+
+- [ ] **[P2] 参数填写优化**
+    - [ ] 目前设置的参数，当切换模型或提供商时，上传的图片会丢失，想办法保留一下
+    - [ ] 其它如时长、分辨率、宽高比、种子等各种选项，能保留的也保留一下，不能保留的就算了
 
 ## ✅ 已完成
 
@@ -212,3 +213,32 @@
         - [x] 支持将任务从回收站还原
         - [x] 还原后再放入回收站，时间重新计数
     - [x] 设置里，设置的key和从环境变量中读取的key，使用不同的文字描述来区分
+
+- [x] **[P2] 用户体验增强与资源优化**
+    - [x] 回收站增加任务状态中类似的筛选，并额外增加删除时间的筛选条件
+    - [x] 部署的Docker容器足足占用了120MB的内存，有什么办法优化一下吗，本地dev好像都没占这么多
+    - [x] 新建一个目录 `tools`，与src平级，用来放一些工具性质的东西
+        - [x] 针对日志文件，写一个 lnav 解析用的语法文件放在tools中
+    - [x] AiHubMix提供商修改
+        - [x] 接入 `App Code` - `ATUH2466`
+        - [x] 下面是官方给的示例代码
+```python
+url = "https://aihubmix.com/v1/chat/completions"
+headers={
+  "Authorization": "Bearer <AIHUBMIX_API_KEY>",  # Replace with the key you generated in AIhubmix
+  "APP-Code": "ATUH2466",  # Replace with your 6-digit referral code
+  "Content-Type": "application/json"
+}
+data={  
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the meaning of life?"
+    }
+  ]
+}
+
+response = requests.post(url, headers=headers, json=data)
+print(response.json())
+```

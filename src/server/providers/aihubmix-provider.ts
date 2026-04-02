@@ -14,6 +14,7 @@ import type {
 
 const BASE_URL = 'https://aihubmix.com';
 const MODELS_API_URL = 'https://aihubmix.com/api/v1/models';
+const APP_CODE = 'ATUH2466';
 
 type AIHubMixStatus = 'queued' | 'in_progress' | 'completed' | 'failed';
 
@@ -323,6 +324,7 @@ export class AIHubMixProvider implements VideoProvider {
             headers: {
                 'Authorization': `Bearer ${this.apiKey}`,
                 'Content-Type': 'application/json',
+                'APP-Code': APP_CODE,
             },
             body: JSON.stringify(body),
         });
@@ -344,6 +346,7 @@ export class AIHubMixProvider implements VideoProvider {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${this.apiKey}`,
+                    'APP-Code': APP_CODE,
                 },
             },
         );
@@ -387,6 +390,7 @@ export class AIHubMixProvider implements VideoProvider {
         const res = await fetch(videoUrl, {
             headers: {
                 'Authorization': `Bearer ${this.apiKey}`,
+                'APP-Code': APP_CODE,
             },
         });
 
@@ -430,9 +434,10 @@ export class AIHubMixProvider implements VideoProvider {
     /** 从 API 获取最新的视频模型列表 */
     async refreshModels(): Promise<ModelInfo[]> {
         const res = await fetch(`${MODELS_API_URL}?type=video`, {
-            headers: this.apiKey
-                ? { 'Authorization': `Bearer ${this.apiKey}` }
-                : {},
+            headers: {
+                ...(this.apiKey ? { 'Authorization': `Bearer ${this.apiKey}` } : {}),
+                'APP-Code': APP_CODE,
+            },
         });
 
         if (!res.ok) {

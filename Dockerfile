@@ -16,7 +16,10 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+# Build frontend
 RUN npm run build
+# Compile server TypeScript to JavaScript
+RUN npx tsc --project tsconfig.json
 
 # ================================
 # Stage 2: Production
@@ -31,21 +34,19 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 
-# Install production deps + tsx (TypeScript runner) in one layer,
+# Install production deps only (no tsx needed),
 # with build tools only present during npm install
 RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
     npm ci --omit=dev && \
-    npm install tsx && \
     npm cache clean --force && \
     apk del .build-deps && \
     rm -rf /root/.cache /tmp/*
 
-# Copy server source and TypeScript config
-COPY src/server/ src/server/
-COPY tsconfig.json ./
+# Copy compiled server JS from builder stage
+COPY --from=builder /app/dist/src/server dist/src/server
 
-# Copy built frontend from builder stage
-COPY --from=builder /app/src/web/dist src/web/dist
+# Copy built frontend from builder stage (path must match __dirname/../web/dist from compiled server)
+COPY --from=builder /app/src/web/dist dist/src/web/dist
 
 # Create data directories
 RUN mkdir -p data/videos data/uploads
@@ -55,4 +56,4 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-CMD ["npx", "tsx", "src/server/index.ts"]
+CMD ["node", "dist/src/server/index.js"]

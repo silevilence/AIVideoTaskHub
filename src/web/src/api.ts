@@ -177,8 +177,23 @@ export interface TrashTask extends Task {
     file_size: number;
 }
 
-export async function fetchTrashTasks(): Promise<TrashTask[]> {
-    const res = await fetch(`${BASE}/trash`);
+export interface TrashFilter {
+    providers?: string[];
+    statuses?: string[];
+    prompt?: string;
+    deletedStartDate?: string;
+    deletedEndDate?: string;
+}
+
+export async function fetchTrashTasks(filter?: TrashFilter): Promise<TrashTask[]> {
+    const params = new URLSearchParams();
+    if (filter?.providers?.length) params.set('providers', filter.providers.join(','));
+    if (filter?.statuses?.length) params.set('statuses', filter.statuses.join(','));
+    if (filter?.prompt) params.set('prompt', filter.prompt);
+    if (filter?.deletedStartDate) params.set('deletedStartDate', filter.deletedStartDate);
+    if (filter?.deletedEndDate) params.set('deletedEndDate', filter.deletedEndDate);
+    const qs = params.toString();
+    const res = await fetch(`${BASE}/trash${qs ? `?${qs}` : ''}`);
     if (!res.ok) throw new Error('获取回收站任务列表失败');
     return res.json();
 }

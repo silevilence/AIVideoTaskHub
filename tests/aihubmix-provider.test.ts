@@ -46,6 +46,12 @@ describe('AIHubMixProvider', () => {
             expect(apiKeySetting!.secret).toBe(true);
             expect(apiKeySetting!.required).toBe(true);
         });
+
+        it('不应暴露 App Code 设置项', () => {
+            const schema = provider.getSettingsSchema();
+            const appCodeSetting = schema.find((s) => s.key === 'app_code');
+            expect(appCodeSetting).toBeUndefined();
+        });
     });
 
     describe('applySettings / getCurrentSettings', () => {
@@ -54,6 +60,11 @@ describe('AIHubMixProvider', () => {
             const current = provider.getCurrentSettings();
             expect(current.api_key).toContain('****');
             expect(current.api_key).not.toBe('sk-new-long-api-key-here');
+        });
+
+        it('getCurrentSettings 不应包含 app_code', () => {
+            const current = provider.getCurrentSettings();
+            expect(current).not.toHaveProperty('app_code');
         });
 
         it('应加载缓存的模型列表', () => {
@@ -113,6 +124,7 @@ describe('AIHubMixProvider', () => {
             expect(options.method).toBe('POST');
             expect(options.headers['Authorization']).toBe(`Bearer ${apiKey}`);
             expect(options.headers['Content-Type']).toBe('application/json');
+            expect(options.headers['APP-Code']).toBe('ATUH2466');
 
             const body = JSON.parse(options.body);
             expect(body.model).toBe('wan2.6-t2v');

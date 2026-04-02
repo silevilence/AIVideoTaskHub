@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { TrashTask, ProviderInfo, ApplyParams } from '../api';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import type { TrashTask, TrashFilter, ProviderInfo, ApplyParams } from '../api';
 import { fetchTrashTasks, fetchProviders, fetchProviderModels, purgeTask, restoreTask } from '../api';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent } from './ui/card';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
 import { ConfirmDialog, AlertDialog } from './ui/dialog';
 import { cn } from '../lib/utils';
 import {
@@ -23,6 +25,8 @@ import {
     ExternalLink,
     Image as ImageIcon,
     RotateCcw,
+    Search,
+    Filter,
 } from 'lucide-react';
 
 type BadgeVariant = 'warning' | 'default' | 'success' | 'destructive';
@@ -171,6 +175,8 @@ function ReferenceImagesPreview({ urls }: { urls: string[] }) {
     );
 }
 
+const ALL_STATUSES = ['pending', 'running', 'success', 'failed'];
+
 export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyParams) => void }) {
     const [tasks, setTasks] = useState<TrashTask[]>([]);
     const [loading, setLoading] = useState(true);
@@ -182,9 +188,36 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
     const [purgeTarget, setPurgeTarget] = useState<TrashTask | null>(null);
     const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
-    const loadTasks = useCallback(async () => {
+    // Filter state
+    const [filterOpen, setFilterOpen] = useState(false);
+    const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
+    const [selectedStatuses, setSelectedStatuses] = useState<string[]>([...ALL_STATUSES]);
+    const [promptSearch, setPromptSearch] = useState('');
+    const [deletedStartDate, setDeletedStartDate] = useState('');
+    const [deletedEndDate, setDeletedEndDate] = useState('');
+
+    const activeFilter = useMemo<TrashFilter | undefined>(() => {
+        const realCount = providers.filter(p => p.name !== 'mock').length;
+        const hasProviderFilter = selectedProviders.length > 0 && selectedProviders.length < realCount;
+        const hasStatusFilter = selectedStatuses.length > 0 && selectedStatuses.length < ALL_STATUSES.length;
+        const hasPrompt = promptSearch.trim().length > 0;
+        const hasDeletedStart = deletedStartDate.length > 0;
+        const hasDeletedEnd = deletedEndDate.length > 0;
+
+        if (!hasProviderFilter && !hasStatusFilter && !hasPrompt && !hasDeletedStart && !hasDeletedEnd) return undefined;
+
+        return {
+            providers: hasProviderFilter ? selectedProviders : undefined,
+            statuses: hasStatusFilter ? selectedStatuses : undefined,
+            prompt: hasPrompt ? promptSearch.trim() : undefined,
+            deletedStartDate: hasDeletedStart ? deletedStartDate : undefined,
+            deletedEndDate: hasDeletedEnd ? deletedEndDate : undefined,
+        };
+    }, [selectedProviders, selectedStatuses, promptSearch, deletedStartDate, deletedEndDate, providers]);
+
+    const loadTasks = useCallback(async (filter?: TrashFilter) => {
         try {
-            const data = await fetchTrashTasks();
+            const data = await fetchTrashTasks(filter);
             setTasks(data);
         } catch {
             console.error('加载回收站任务列表失败');
@@ -207,8 +240,8 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
     }, []);
 
     useEffect(() => {
-        loadTasks();
-    }, [loadTasks]);
+        loadTasks(activeFilter);
+    }, [loadTasks, activeFilter]);
 
     const providerDisplayName = useCallback((name: string) => {
         const info = providers.find(p => p.name === name);
@@ -236,7 +269,7 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
         setPurgeTarget(null);
         try {
             await purgeTask(id);
-            await loadTasks();
+            await loadTasks(activeFilter);
         } catch (err) {
             setAlertMessage((err as Error).message);
         }
@@ -250,11 +283,34 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
     const handleRestore = async (task: TrashTask) => {
         try {
             await restoreTask(task.id);
-            await loadTasks();
+            await loadTasks(activeFilter);
         } catch (err) {
             setAlertMessage((err as Error).message);
         }
     };
+
+    const toggleStatus = (s: string) => {
+        setSelectedStatuses((prev) =>
+            prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s],
+        );
+    };
+
+    const toggleProvider = (p: string) => {
+        setSelectedProviders((prev) =>
+            prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p],
+        );
+    };
+
+    const handleReset = useCallback(() => {
+        setSelectedProviders([]);
+        setSelectedStatuses([...ALL_STATUSES]);
+        setPromptSearch('');
+        setDeletedStartDate('');
+        setDeletedEndDate('');
+        loadTasks(undefined);
+    }, [loadTasks]);
+
+    const realProviders = providers.filter(p => p.name !== 'mock');
 
     const totalFileSize = tasks.reduce((sum, t) => sum + t.file_size, 0);
 
@@ -284,7 +340,116 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
                         )}
                     </p>
                 </div>
+                <Button
+                    variant={filterOpen ? 'secondary' : 'outline'}
+                    size="sm"
+                    onClick={() => setFilterOpen(!filterOpen)}
+                >
+                    <Filter className="h-4 w-4 mr-1.5" />
+                    筛选
+                </Button>
             </div>
+
+            {/* 筛选面板 */}
+            {filterOpen && (
+                <Card>
+                    <CardContent className="pt-5 space-y-4">
+                        {/* 提示词搜索 */}
+                        <div className="space-y-1.5">
+                            <Label>提示词搜索</Label>
+                            <div className="relative">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    value={promptSearch}
+                                    onChange={(e) => setPromptSearch(e.target.value)}
+                                    placeholder="模糊搜索提示词..."
+                                    className="pl-9"
+                                />
+                            </div>
+                        </div>
+
+                        {/* 状态筛选 */}
+                        <div className="space-y-1.5">
+                            <Label>任务状态</Label>
+                            <div className="flex flex-wrap gap-2">
+                                {ALL_STATUSES.map((s) => {
+                                    const cfg = STATUS_CONFIG[s];
+                                    const active = selectedStatuses.includes(s);
+                                    return (
+                                        <button
+                                            key={s}
+                                            onClick={() => toggleStatus(s)}
+                                            className={cn(
+                                                'inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer',
+                                                active
+                                                    ? 'bg-primary/15 text-primary border-primary/30'
+                                                    : 'bg-muted text-muted-foreground border-transparent opacity-50',
+                                            )}
+                                        >
+                                            {cfg.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Provider 筛选 */}
+                        {realProviders.length > 1 && (
+                            <div className="space-y-1.5">
+                                <Label>平台</Label>
+                                <div className="flex flex-wrap gap-2">
+                                    {realProviders.map((p) => {
+                                        const active = selectedProviders.length === 0 || selectedProviders.includes(p.name);
+                                        return (
+                                            <button
+                                                key={p.name}
+                                                onClick={() => toggleProvider(p.name)}
+                                                className={cn(
+                                                    'inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer',
+                                                    active
+                                                        ? 'bg-primary/15 text-primary border-primary/30'
+                                                        : 'bg-muted text-muted-foreground border-transparent opacity-50',
+                                                )}
+                                            >
+                                                {p.displayName}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 删除时间范围 */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                                <Label>删除开始时间</Label>
+                                <Input
+                                    type="datetime-local"
+                                    value={deletedStartDate}
+                                    onChange={(e) => setDeletedStartDate(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label>删除结束时间</Label>
+                                <Input
+                                    type="datetime-local"
+                                    value={deletedEndDate}
+                                    onChange={(e) => setDeletedEndDate(e.target.value)}
+                                />
+                            </div>
+                        </div>
+
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleReset}
+                            className="text-muted-foreground"
+                        >
+                            重置筛选
+                        </Button>
+                    </CardContent>
+                </Card>
+            )}
 
             {tasks.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">

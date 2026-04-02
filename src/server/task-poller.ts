@@ -107,7 +107,7 @@ export class TaskPoller {
                     }
                 }
             } else if (statusResult.status === 'failed') {
-                logger.taskStatusChanged(task.id, task.status, 'failed', statusResult.errorMessage);
+                logger.taskStatusChanged(task.id, task.status, 'failed');
                 if (task.retry_count < this.maxRetries) {
                     updateTaskStatus(task.id, 'failed', {
                         errorMessage: statusResult.errorMessage ?? '未知错误',

@@ -1,0 +1,45 @@
+{
+    "$schema": "https://lnav.org/schemas/format-v1.schema.json",
+    "aivideotaskhub_log": {
+        "title": "AIVideoTaskHub Log Format",
+        "description": "Log format for AIVideoTaskHub application logs",
+        "url": "https://github.com/silevilence/AIVideoTaskHub",
+        "regex": {
+            "std": {
+                "pattern": "^\\[(?<timestamp>[^\\]]+)\\] \\[(?<level>\\w+)\\] (?<body>.*?)(?:\\s+(?<json>\\{.*\\}))?$"
+            }
+        },
+        "timestamp-format": [
+            "%Y-%m-%dT%H:%M:%S.%LZ"
+        ],
+        "level-field": "level",
+        "level": {
+            "debug": "DEBUG",
+            "info": "INFO",
+            "warning": "WARN",
+            "error": "ERROR"
+        },
+        "body-field": "body",
+        "value": {
+            "json": {
+                "kind": "json",
+                "identifier": false,
+                "hidden": false
+            }
+        },
+        "sample": [
+            {
+                "line": "[2026-04-01T12:00:00.000Z] [INFO] 服务启动 {\"port\":3000}",
+                "level": "info"
+            },
+            {
+                "line": "[2026-04-01T12:01:00.000Z] [ERROR] 任务失败: #42 {\"error\":\"timeout\"}",
+                "level": "error"
+            },
+            {
+                "line": "[2026-04-01T12:02:00.000Z] [DEBUG] Provider API 调用: siliconflow.createTask",
+                "level": "debug"
+            }
+        ]
+    }
+}

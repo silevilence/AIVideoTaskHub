@@ -76,6 +76,66 @@ describe('回收站 Model 操作', () => {
             expect(deleted[0].id).toBe(t2.id);
             expect(deleted[1].id).toBe(t1.id);
         });
+
+        it('应按 provider 筛选', () => {
+            const t1 = insertTask({ provider: 'siliconflow', prompt: '任务1' });
+            const t2 = insertTask({ provider: 'volcengine', prompt: '任务2' });
+            deleteTask(t1.id);
+            deleteTask(t2.id);
+
+            const deleted = getDeletedTasks({ providers: ['siliconflow'] });
+            expect(deleted).toHaveLength(1);
+            expect(deleted[0].provider).toBe('siliconflow');
+        });
+
+        it('应按 status 筛选', () => {
+            const t1 = insertTask({ provider: 'mock', prompt: '任务1' });
+            const t2 = insertTask({ provider: 'mock', prompt: '任务2' });
+            updateTaskStatus(t1.id, 'success');
+            updateTaskStatus(t2.id, 'failed');
+            deleteTask(t1.id);
+            deleteTask(t2.id);
+
+            const deleted = getDeletedTasks({ statuses: ['failed'] });
+            expect(deleted).toHaveLength(1);
+            expect(deleted[0].id).toBe(t2.id);
+        });
+
+        it('应按 prompt 模糊筛选', () => {
+            const t1 = insertTask({ provider: 'mock', prompt: '一只猫在跳舞' });
+            const t2 = insertTask({ provider: 'mock', prompt: '美丽的风景' });
+            deleteTask(t1.id);
+            deleteTask(t2.id);
+
+            const deleted = getDeletedTasks({ prompt: '猫' });
+            expect(deleted).toHaveLength(1);
+            expect(deleted[0].id).toBe(t1.id);
+        });
+
+        it('应按删除时间范围筛选', () => {
+            const t1 = insertTask({ provider: 'mock', prompt: '任务1' });
+            const t2 = insertTask({ provider: 'mock', prompt: '任务2' });
+            const db = getDb();
+            db.prepare("UPDATE tasks SET deleted_at = '2024-06-01 00:00:00' WHERE id = ?").run(t1.id);
+            db.prepare("UPDATE tasks SET deleted_at = '2024-08-01 00:00:00' WHERE id = ?").run(t2.id);
+
+            const deleted = getDeletedTasks({ deletedStartDate: '2024-07-01', deletedEndDate: '2024-09-01' });
+            expect(deleted).toHaveLength(1);
+            expect(deleted[0].id).toBe(t2.id);
+        });
+
+        it('多条件组合筛选应同时生效', () => {
+            const t1 = insertTask({ provider: 'siliconflow', prompt: '猫在跳舞' });
+            const t2 = insertTask({ provider: 'volcengine', prompt: '猫在唱歌' });
+            const t3 = insertTask({ provider: 'siliconflow', prompt: '美丽风景' });
+            deleteTask(t1.id);
+            deleteTask(t2.id);
+            deleteTask(t3.id);
+
+            const deleted = getDeletedTasks({ providers: ['siliconflow'], prompt: '猫' });
+            expect(deleted).toHaveLength(1);
+            expect(deleted[0].id).toBe(t1.id);
+        });
     });
 
     describe('getDeletedTaskById', () => {
@@ -281,6 +341,66 @@ describe('回收站 API', () => {
             expect(res.status).toBe(200);
             // 每个任务应有 file_size 字段（即使为0）
             expect(res.body[0]).toHaveProperty('file_size');
+        });
+
+        it('应支持按 provider 筛选', async () => {
+            const registry2 = new ProviderRegistry();
+            registry2.register(createMockProvider('mock'));
+            registry2.register(createMockProvider('other', ['model-b']));
+            const app2 = setupApp(registry2);
+
+            const r1 = await request(app2).post('/api/tasks').send({ provider: 'mock', prompt: '任务1' });
+            const r2 = await request(app2).post('/api/tasks').send({ provider: 'other', prompt: '任务2' });
+            await request(app2).delete(`/api/tasks/${r1.body.id}`);
+            await request(app2).delete(`/api/tasks/${r2.body.id}`);
+
+            const res = await request(app2).get('/api/trash?providers=mock');
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveLength(1);
+            expect(res.body[0].provider).toBe('mock');
+        });
+
+        it('应支持按 status 筛选', async () => {
+            const r1 = await request(app).post('/api/tasks').send({ provider: 'mock', prompt: '成功任务' });
+            const r2 = await request(app).post('/api/tasks').send({ provider: 'mock', prompt: '失败任务' });
+            const db = getDb();
+            db.prepare("UPDATE tasks SET status = 'success' WHERE id = ?").run(r1.body.id);
+            db.prepare("UPDATE tasks SET status = 'failed' WHERE id = ?").run(r2.body.id);
+            await request(app).delete(`/api/tasks/${r1.body.id}`);
+            await request(app).delete(`/api/tasks/${r2.body.id}`);
+
+            const res = await request(app).get('/api/trash?statuses=failed');
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveLength(1);
+            expect(res.body[0].prompt).toBe('失败任务');
+        });
+
+        it('应支持按 prompt 搜索', async () => {
+            const r1 = await request(app).post('/api/tasks').send({ provider: 'mock', prompt: '一只猫在跳舞' });
+            const r2 = await request(app).post('/api/tasks').send({ provider: 'mock', prompt: '美丽的风景' });
+            await request(app).delete(`/api/tasks/${r1.body.id}`);
+            await request(app).delete(`/api/tasks/${r2.body.id}`);
+
+            const res = await request(app).get('/api/trash?prompt=猫');
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveLength(1);
+            expect(res.body[0].prompt).toContain('猫');
+        });
+
+        it('应支持按删除时间范围筛选', async () => {
+            const r1 = await request(app).post('/api/tasks').send({ provider: 'mock', prompt: '旧任务' });
+            const r2 = await request(app).post('/api/tasks').send({ provider: 'mock', prompt: '新任务' });
+            await request(app).delete(`/api/tasks/${r1.body.id}`);
+            await request(app).delete(`/api/tasks/${r2.body.id}`);
+
+            const db = getDb();
+            db.prepare("UPDATE tasks SET deleted_at = '2024-01-01 00:00:00' WHERE id = ?").run(r1.body.id);
+            db.prepare("UPDATE tasks SET deleted_at = '2024-08-01 00:00:00' WHERE id = ?").run(r2.body.id);
+
+            const res = await request(app).get('/api/trash?deletedStartDate=2024-06-01&deletedEndDate=2024-12-31');
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveLength(1);
+            expect(res.body[0].prompt).toBe('新任务');
         });
     });
 

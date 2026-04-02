@@ -316,7 +316,18 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
 
     // 获取回收站任务列表
     router.get('/trash', (req, res) => {
-        const tasks = getDeletedTasks();
+        const { providers, statuses, prompt, deletedStartDate, deletedEndDate } = req.query;
+        const hasFilter = providers || statuses || prompt || deletedStartDate || deletedEndDate;
+
+        const filter = hasFilter ? {
+            providers: typeof providers === 'string' ? providers.split(',').filter(Boolean) : undefined,
+            statuses: typeof statuses === 'string' ? statuses.split(',').filter(Boolean) : undefined,
+            prompt: typeof prompt === 'string' ? prompt : undefined,
+            deletedStartDate: typeof deletedStartDate === 'string' ? deletedStartDate : undefined,
+            deletedEndDate: typeof deletedEndDate === 'string' ? deletedEndDate : undefined,
+        } : undefined;
+
+        const tasks = getDeletedTasks(filter);
         const dataDir = process.env.DATA_DIR || 'data';
 
         const tasksWithSize = tasks.map((task) => {

@@ -161,12 +161,50 @@ export function filterTasks(filter: TaskFilter): Task[] {
     return db.prepare(sql).all(params) as Task[];
 }
 
-/** 获取所有回收站中的任务（已软删除、未彻底删除），按删除时间倒序 */
-export function getDeletedTasks(): Task[] {
+/** 回收站筛选参数 */
+export interface TrashFilter {
+    providers?: string[];
+    statuses?: string[];
+    prompt?: string;
+    deletedStartDate?: string;
+    deletedEndDate?: string;
+}
+
+/** 获取所有回收站中的任务（已软删除、未彻底删除），按删除时间倒序，支持筛选 */
+export function getDeletedTasks(filter?: TrashFilter): Task[] {
     const db = getDb();
-    return db
-        .prepare('SELECT * FROM tasks WHERE deleted_at IS NOT NULL AND purged_at IS NULL ORDER BY deleted_at DESC')
-        .all() as Task[];
+    const conditions: string[] = ['deleted_at IS NOT NULL', 'purged_at IS NULL'];
+    const params: Record<string, unknown> = {};
+
+    if (filter?.providers && filter.providers.length > 0) {
+        const placeholders = filter.providers.map((_, i) => `@p${i}`);
+        conditions.push(`provider IN (${placeholders.join(', ')})`);
+        filter.providers.forEach((p, i) => { params[`p${i}`] = p; });
+    }
+
+    if (filter?.statuses && filter.statuses.length > 0) {
+        const placeholders = filter.statuses.map((_, i) => `@s${i}`);
+        conditions.push(`status IN (${placeholders.join(', ')})`);
+        filter.statuses.forEach((s, i) => { params[`s${i}`] = s; });
+    }
+
+    if (filter?.prompt) {
+        conditions.push('prompt LIKE @prompt');
+        params.prompt = `%${filter.prompt}%`;
+    }
+
+    if (filter?.deletedStartDate) {
+        conditions.push('deleted_at >= @deletedStartDate');
+        params.deletedStartDate = filter.deletedStartDate;
+    }
+
+    if (filter?.deletedEndDate) {
+        conditions.push('deleted_at <= @deletedEndDate');
+        params.deletedEndDate = filter.deletedEndDate;
+    }
+
+    const sql = `SELECT * FROM tasks WHERE ${conditions.join(' AND ')} ORDER BY deleted_at DESC`;
+    return db.prepare(sql).all(params) as Task[];
 }
 
 /** 根据 id 获取回收站中的单条任务 */
