@@ -3,8 +3,8 @@
 ## 📌 项目基本信息
 - **项目定位**：个人家用的 AI 视频生成 API 聚合与异步任务管理系统。
 - **架构模式**：前后端一体化（Monolithic），Node.js 负责 API、静态资源托管与后台轮询，单 Docker 镜像部署。
-- **当前代码版本**：0.1.0
-- **最近变更记录**：最新 Change Log 条目为 V1.1.0
+- **当前代码版本**：1.2.0
+- **最近变更记录**：最新 Change Log 条目为 V1.2.0
 - **已接入平台**：SiliconFlow（硅基流动）、火山引擎 Seedance、AIHubMix。
 
 ## 🛠️ 技术栈与依赖包
@@ -24,11 +24,13 @@
 │   │   ├── index.ts                 # 服务入口（初始化数据库、Provider、轮询器）
 │   │   ├── database.ts              # SQLite 初始化与轻量迁移
 │   │   ├── logger.ts                # 控制台 + 文件日志
+│   │   ├── llm-client.ts            # OpenAI/Ollama 兼容的 LLM 客户端
 │   │   ├── provider.ts              # Provider 接口、模型能力声明、设置项声明
 │   │   ├── provider-registry.ts     # Provider 注册中心
 │   │   ├── task-model.ts            # Task/Settings 数据访问层
 │   │   ├── task-poller.ts           # 后台轮询 Worker（状态同步、下载、重试）
 │   │   ├── task-router.ts           # API 路由
+│   │   ├── text-settings.ts         # 文本 AI 和提示词优化设置的数据层
 │   │   └── providers/
 │   │       ├── mock-provider.ts
 │   │       ├── siliconflow-provider.ts
@@ -46,9 +48,11 @@
 │           │   └── icons/           # 平台图标与应用图标
 │           ├── components/
 │           │   ├── CreateTaskForm.tsx  # 创建任务、套用参数、图片库选择
+│           │   ├── PromptOptimizer.tsx # AI 提示词智能优化组件
 │           │   ├── TaskList.tsx        # 任务列表、筛选、预览、下载、套用参数
-│           │   ├── RecycleBin.tsx      # 回收站、恢复、彻底删除、套用参数
+│           │   ├── RecycleBin.tsx      # 回收站、分类筛选、恢复、彻底删除
 │           │   ├── SettingsPanel.tsx   # Provider 设置、来源展示、模型刷新
+│           │   ├── TextSettingsPanel.tsx # 文本模型和提示词优化设置面板
 │           │   ├── ThemeToggle.tsx
 │           │   └── ui/                # 基础 UI 组件
 │           ├── hooks/
@@ -112,9 +116,11 @@
 
 ### 前端功能模块
 - **CreateTaskForm**：支持 Provider/模型选择、动态参数、图片上传、图片库复用、从任务/回收站套用参数。
+- **PromptOptimizer**：支持对话式提示词优化、流式输出与快速采纳。
 - **TaskList**：支持任务筛选、状态展示、视频预览、错误查看、参数详情和参数套用。
-- **RecycleBin**：支持回收站浏览、恢复、彻底删除、媒体大小展示和参数套用。
+- **RecycleBin**：支持回收站浏览、恢复、彻底删除、媒体大小展示和参数套用。支持按服务商、状态、提示词等筛选。
 - **SettingsPanel**：支持设置保存、显示环境变量/本地保存来源、AIHubMix 模型刷新。
+- **TextSettingsPanel**：支持配置独立的文本 Provider 和多种模型参数项配置。
 - **ThemeToggle**：管理亮色/暗色主题切换。
 
 ## 🌐 API 端点
@@ -128,6 +134,13 @@
 | PUT | `/api/settings/:provider` | 更新指定 Provider 设置 |
 | POST | `/api/upload` | 上传图片，限制 10MB |
 | GET | `/api/uploads` | 获取已上传图片列表 |
+| GET | `/api/text-settings` | 获取文本设置 |
+| PUT | `/api/text-settings` | 更新文本设置 |
+| GET | `/api/text-settings/model-languages` | 获取默认文本请求语言表 |
+| PUT | `/api/text-settings/model-languages` | 更新文本请求语言表 |
+| POST | `/api/text-settings/fetch-models` | 获取目标文本 Provider 支持的模型 |
+| POST | `/api/prompt/optimize` | 发起 LLM 提示词优化（含流式）|
+| POST | `/api/prompt/optimize/abort` | 取消优化 |
 | POST | `/api/tasks` | 创建任务 |
 | GET | `/api/tasks` | 获取任务列表，支持 providers/statuses/prompt/startDate/endDate 过滤 |
 | GET | `/api/tasks/:id` | 获取单个任务详情 |

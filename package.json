@@ -1,6 +1,6 @@
 {
   "name": "ai-video-task-hub",
-  "version": "0.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "AI 视频生成 API 聚合与异步任务管理系统",
   "type": "module",
