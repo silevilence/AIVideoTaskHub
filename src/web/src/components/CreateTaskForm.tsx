@@ -7,7 +7,8 @@ import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Card, CardContent } from './ui/card';
 import { cn } from '../lib/utils';
-import { Sparkles, Upload, X, ChevronDown, AlertTriangle, ClipboardPaste, Play, Info, ExternalLink, Image as ImageIcon } from 'lucide-react';
+import { Sparkles, Upload, X, ChevronDown, AlertTriangle, ClipboardPaste, Play, Info, ExternalLink, Image as ImageIcon, Wand2 } from 'lucide-react';
+import { PromptOptimizer } from './PromptOptimizer';
 import siliconflowIcon from '../assets/icons/siliconflow.png';
 import volcengineIcon from '../assets/icons/volcengine.png';
 import aihubmixIcon from '../assets/icons/aihubmix.png';
@@ -59,6 +60,9 @@ export function CreateTaskForm({
     const [uploadedImagesModalOpen, setUploadedImagesModalOpen] = useState(false);
     const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
     const [uploadedImagesLoading, setUploadedImagesLoading] = useState(false);
+
+    // AI 提示词优化弹窗
+    const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
     // 用于标识选择图片后应用到哪个位置：firstFrame(首帧)、lastFrame(尾帧)、reference(参考图)
     const [uploadedImagesTarget, setUploadedImagesTarget] = useState<'firstFrame' | 'lastFrame' | 'reference'>('firstFrame');
 
@@ -1029,7 +1033,20 @@ export function CreateTaskForm({
                         )}
 
                         <div className="space-y-2">
-                            <Label htmlFor="prompt">Prompt</Label>
+                            <div className="flex items-center justify-between">
+                                <Label htmlFor="prompt">Prompt</Label>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={() => setPromptOptimizerOpen(true)}
+                                    disabled={!prompt.trim()}
+                                >
+                                    <Wand2 className="h-3 w-3 mr-1" />
+                                    AI 优化
+                                </Button>
+                            </div>
                             <Textarea
                                 id="prompt"
                                 value={prompt}
@@ -1071,6 +1088,21 @@ export function CreateTaskForm({
                     </form>
                 </CardContent>
             </Card>
+
+            {/* AI 提示词优化弹窗 - 渲染在 form 外部防止事件冒泡 */}
+            <PromptOptimizer
+                open={promptOptimizerOpen}
+                initialPrompt={prompt}
+                onClose={(adoptedInput) => {
+                    setPromptOptimizerOpen(false);
+                    if (adoptedInput !== undefined) {
+                        setPrompt(adoptedInput);
+                    }
+                }}
+                onAdoptResult={(result) => {
+                    setPrompt(result);
+                }}
+            />
 
             {/* 套用参数弹窗 */}
             {applyModalOpen && (

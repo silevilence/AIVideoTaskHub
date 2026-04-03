@@ -6,9 +6,59 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
-import { Settings, Save, Check, Search, RefreshCw, Server, Database } from 'lucide-react';
+import { Settings, Save, Check, Search, RefreshCw, Server, Database, Video, MessageSquare } from 'lucide-react';
+import { TextSettingsPanel } from './TextSettingsPanel';
+import { cn } from '../lib/utils';
+
+type SettingsTab = 'video' | 'text';
 
 export function SettingsPanel() {
+    const [activeTab, setActiveTab] = useState<SettingsTab>('video');
+
+    return (
+        <div className="max-w-2xl mx-auto space-y-6">
+            <div>
+                <h2 className="text-xl font-heading font-bold tracking-wide">设置</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                    管理各平台 API 密钥和配置
+                </p>
+            </div>
+
+            {/* 页签切换 */}
+            <div className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit">
+                <button
+                    onClick={() => setActiveTab('video')}
+                    className={cn(
+                        'flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer',
+                        activeTab === 'video'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground',
+                    )}
+                >
+                    <Video className="h-4 w-4" />
+                    视频设置
+                </button>
+                <button
+                    onClick={() => setActiveTab('text')}
+                    className={cn(
+                        'flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer',
+                        activeTab === 'text'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground',
+                    )}
+                >
+                    <MessageSquare className="h-4 w-4" />
+                    文本设置
+                </button>
+            </div>
+
+            {activeTab === 'video' && <VideoSettingsPanel />}
+            {activeTab === 'text' && <TextSettingsPanel />}
+        </div>
+    );
+}
+
+function VideoSettingsPanel() {
     const [allSettings, setAllSettings] = useState<Record<string, ProviderSettings>>({});
     const [editValues, setEditValues] = useState<Record<string, Record<string, string>>>({});
     const [saving, setSaving] = useState<Record<string, boolean>>({});
@@ -95,14 +145,7 @@ export function SettingsPanel() {
     };
 
     return (
-        <div className="max-w-2xl mx-auto space-y-6">
-            <div>
-                <h2 className="text-xl font-heading font-bold tracking-wide">设置</h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                    管理各平台 API 密钥和配置
-                </p>
-            </div>
-
+        <div className="space-y-6">
             {/* 搜索栏 */}
             <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -153,7 +196,7 @@ export function SettingsPanel() {
                                         </Badge>
                                     )}
                                     {ps.sources[field.key] === 'saved' && (
-                                        <Badge variant="outline" className="text-xs px-1.5 py-0 h-5 gap-1">
+                                        <Badge variant="secondary" className="text-xs px-1.5 py-0 h-5 gap-1">
                                             <Database className="h-3 w-3" />
                                             已保存
                                         </Badge>

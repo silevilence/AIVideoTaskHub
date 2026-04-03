@@ -19,9 +19,37 @@ import {
 } from './task-model.js';
 import type { ModelInfo } from './provider.js';
 import { logger } from './logger.js';
+import {
+    getTextSettings,
+    updateTextSettings,
+    getModelLanguageOverride,
+    setModelLanguageOverride,
+    removeModelLanguageOverride,
+    validatePromptTemplate,
+    renderPromptTemplate,
+    getPromptTemplate,
+    getPromptLanguage,
+    PRESET_PROVIDERS,
+    type TextProviderConfig,
+    type TextSettings,
+} from './text-settings.js';
+import { callLLM, callLLMStream, fetchLLMModels } from './llm-client.js';
 
 export function createTaskRouter(registry: ProviderRegistry): Router {
     const router = Router();
+
+    // 视频提供商 API Key 解析辅助
+    const ENV_KEY_MAPPING: Record<string, string> = {
+        siliconflow: 'SILICONFLOW_API_KEY',
+        volcengine: 'VOLCENGINE_API_KEY',
+        aihubmix: 'AIHUBMIX_API_KEY',
+    };
+
+    function resolveVideoApiKey(videoProviderName: string): string {
+        const videoKey = getSetting(`provider:${videoProviderName}:api_key`);
+        const envKey = ENV_KEY_MAPPING[videoProviderName];
+        return videoKey || (envKey ? (process.env[envKey] || '') : '');
+    }
 
     // 获取已注册的 provider 列表
     router.get('/providers', (_req, res) => {
@@ -443,6 +471,249 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
             res.json({ models, updatedAt: new Date().toISOString() });
         } catch (err) {
             res.status(500).json({ error: `刷新模型失败: ${(err as Error).message}` });
+        }
+    });
+
+    // ── 文本设置接口 ──────────────────────────
+
+    // 获取文本设置（含预置提供商列表）
+    router.get('/text-settings', (_req, res) => {
+        const settings = getTextSettings();
+        res.json({ ...settings, presetProviders: PRESET_PROVIDERS });
+    });
+
+    // 更新文本设置
+    router.put('/text-settings', (req, res) => {
+        const body = req.body as Partial<TextSettings>;
+        if (!body || typeof body !== 'object') {
+            res.status(400).json({ error: '无效的设置数据' });
+            return;
+        }
+
+        // 校验 Prompt 模板
+        if (body.promptTemplate !== undefined) {
+            const validation = validatePromptTemplate(body.promptTemplate);
+            if (!validation.valid) {
+                res.status(400).json({ error: validation.warnings[0] });
+                return;
+            }
+        }
+
+        updateTextSettings(body);
+        res.json({ ok: true, warnings: [] });
+    });
+
+    // 获取视频模型的语言覆盖
+    router.get('/text-settings/model-languages', (req, res) => {
+        const { videoProvider, modelId } = req.query;
+        if (typeof videoProvider === 'string' && typeof modelId === 'string') {
+            const lang = getModelLanguageOverride(videoProvider, modelId);
+            res.json({ language: lang });
+        } else {
+            res.status(400).json({ error: '需要 videoProvider 和 modelId 参数' });
+        }
+    });
+
+    // 设置视频模型的语言覆盖
+    router.put('/text-settings/model-languages', (req, res) => {
+        const { videoProvider, modelId, language } = req.body;
+        if (typeof videoProvider !== 'string' || typeof modelId !== 'string') {
+            res.status(400).json({ error: '需要 videoProvider 和 modelId' });
+            return;
+        }
+        if (language) {
+            setModelLanguageOverride(videoProvider, modelId, language);
+        } else {
+            removeModelLanguageOverride(videoProvider, modelId);
+        }
+        res.json({ ok: true });
+    });
+
+    // 获取文本提供商的远程模型列表
+    router.post('/text-settings/fetch-models', async (req, res) => {
+        const { providerName, baseUrl: directBaseUrl, apiKey: directApiKey, appCode: directAppCode, apiKeySource } = req.body;
+
+        let baseUrl: string;
+        let apiKey: string;
+        let appCode: string | undefined;
+
+        // 优先从已保存配置中查找
+        const textSettings = getTextSettings();
+        const savedProvider = providerName ? textSettings.providers.find(p => p.name === providerName) : null;
+
+        if (savedProvider) {
+            baseUrl = savedProvider.baseUrl;
+            appCode = savedProvider.appCode;
+
+            if (savedProvider.apiKeySource.startsWith('video:')) {
+                const videoProviderName = savedProvider.apiKeySource.slice(6);
+                apiKey = resolveVideoApiKey(videoProviderName);
+            } else {
+                apiKey = savedProvider.apiKey;
+            }
+        } else if (directBaseUrl) {
+            // 未保存（用户正在编辑），使用前端直接传来的配置
+            baseUrl = directBaseUrl;
+            appCode = directAppCode;
+
+            if (apiKeySource && apiKeySource.startsWith('video:')) {
+                const videoProviderName = apiKeySource.slice(6);
+                apiKey = resolveVideoApiKey(videoProviderName);
+            } else {
+                apiKey = directApiKey || '';
+            }
+        } else {
+            res.status(400).json({ error: '需要提供 baseUrl 或已保存的 providerName' });
+            return;
+        }
+
+        if (!baseUrl || !apiKey) {
+            res.status(400).json({ error: '需要 baseUrl 和 apiKey（或先配置并保存文本提供商）' });
+            return;
+        }
+        try {
+            logger.info(`fetch-models: baseUrl=${baseUrl}, provider=${providerName || 'direct'}`);
+            const models = await fetchLLMModels(baseUrl, apiKey, appCode);
+            res.json(models);
+        } catch (err) {
+            res.status(500).json({ error: (err as Error).message });
+        }
+    });
+
+    // ── Prompt 优化接口 ──────────────────────────
+
+    // 活跃的优化请求 AbortController（简易单用户设计）
+    const activeAbortControllers = new Map<string, AbortController>();
+
+    // 非流式 Prompt 优化
+    router.post('/prompt/optimize', async (req, res) => {
+        const { input, providerName, modelId, streaming, language } = req.body as {
+            input: string;
+            providerName: string;
+            modelId: string;
+            streaming?: boolean;
+            language?: string;
+        };
+
+        if (!input || typeof input !== 'string') {
+            res.status(400).json({ error: '缺少 input' });
+            return;
+        }
+        if (!providerName || !modelId) {
+            res.status(400).json({ error: '缺少 providerName 或 modelId' });
+            return;
+        }
+
+        // 查找文本提供商配置
+        const settings = getTextSettings();
+        const provider = settings.providers.find(p => p.name === providerName);
+        if (!provider) {
+            res.status(400).json({ error: `文本提供商 "${providerName}" 未配置` });
+            return;
+        }
+        // 解析实际使用的 API Key（可能复用视频提供商的）
+        let apiKey = provider.apiKey || '';
+        if (provider.apiKeySource.startsWith('video:')) {
+            const videoProviderName = provider.apiKeySource.slice(6);
+            apiKey = resolveVideoApiKey(videoProviderName);
+            if (!apiKey) {
+                res.status(400).json({ error: `视频提供商 "${videoProviderName}" 的 API Key 未配置` });
+                return;
+            }
+        }
+
+        if (!apiKey) {
+            res.status(400).json({ error: `文本提供商 "${providerName}" 未配置 API Key` });
+            return;
+        }
+
+        // 渲染 Prompt 模板
+        const template = getPromptTemplate();
+        const effectiveLanguage = language || settings.promptLanguage || '中文';
+        const systemPrompt = renderPromptTemplate(template, input, effectiveLanguage);
+
+        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const abortController = new AbortController();
+        activeAbortControllers.set(requestId, abortController);
+
+        try {
+            if (streaming) {
+                // 流式响应 (SSE)
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+                res.setHeader('X-Request-Id', requestId);
+
+                const stream = await callLLMStream({
+                    baseUrl: provider.baseUrl,
+                    apiKey,
+                    model: modelId,
+                    messages: [{ role: 'user', content: systemPrompt }],
+                    stream: true,
+                    appCode: provider.appCode,
+                    signal: abortController.signal,
+                });
+
+                const reader = stream.getReader();
+                const decoder = new TextDecoder();
+
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        const chunk = decoder.decode(value, { stream: true });
+                        // 直接转发 SSE chunks
+                        res.write(chunk);
+                    }
+                } catch (err) {
+                    if ((err as Error).name !== 'AbortError') {
+                        res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);
+                    }
+                } finally {
+                    res.write('data: [DONE]\n\n');
+                    res.end();
+                    activeAbortControllers.delete(requestId);
+                }
+            } else {
+                // 非流式响应
+                res.setHeader('X-Request-Id', requestId);
+                const result = await callLLM({
+                    baseUrl: provider.baseUrl,
+                    apiKey,
+                    model: modelId,
+                    messages: [{ role: 'user', content: systemPrompt }],
+                    appCode: provider.appCode,
+                    signal: abortController.signal,
+                });
+
+                activeAbortControllers.delete(requestId);
+                res.json({ content: result.content, finishReason: result.finishReason });
+            }
+        } catch (err) {
+            activeAbortControllers.delete(requestId);
+            if ((err as Error).name === 'AbortError') {
+                res.status(499).json({ error: '请求已中断' });
+            } else {
+                logger.error(`Prompt 优化失败: ${(err as Error).message}`);
+                res.status(500).json({ error: (err as Error).message });
+            }
+        }
+    });
+
+    // 中断 Prompt 优化请求
+    router.post('/prompt/optimize/abort', (req, res) => {
+        const { requestId } = req.body;
+        if (requestId && activeAbortControllers.has(requestId)) {
+            activeAbortControllers.get(requestId)!.abort();
+            activeAbortControllers.delete(requestId);
+            res.json({ ok: true });
+        } else {
+            // 中断所有活跃请求
+            for (const [id, controller] of activeAbortControllers) {
+                controller.abort();
+                activeAbortControllers.delete(id);
+            }
+            res.json({ ok: true, abortedAll: true });
         }
     });
 

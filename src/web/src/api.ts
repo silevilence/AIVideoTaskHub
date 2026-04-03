@@ -245,3 +245,213 @@ export interface ApplyParams {
     imageUrl: string | null;
     extraParams: Record<string, unknown>;
 }
+
+// ── 文本设置相关 ──────────────────────────
+
+export interface TextModel {
+    id: string;
+    displayName: string;
+    reasoning: boolean;
+}
+
+export type TextProviderType = 'openai' | 'ollama';
+
+export interface TextProviderConfig {
+    name: string;
+    displayName: string;
+    baseUrl: string;
+    apiKey: string;
+    apiKeySource: string;
+    appCode?: string;
+    models: TextModel[];
+    isPreset: boolean;
+    type: TextProviderType;
+}
+
+export interface PresetProvider {
+    name: string;
+    displayName: string;
+    baseUrl: string;
+    isPreset: boolean;
+    appCode?: string;
+    type: TextProviderType;
+}
+
+export interface TextSettings {
+    providers: TextProviderConfig[];
+    streaming: boolean;
+    promptTemplate: string;
+    promptLanguage: string;
+    presetProviders: PresetProvider[];
+}
+
+export async function fetchTextSettings(): Promise<TextSettings> {
+    const res = await fetch(`${BASE}/text-settings`);
+    if (!res.ok) throw new Error('获取文本设置失败');
+    return res.json();
+}
+
+export async function updateTextSettings(settings: Partial<Omit<TextSettings, 'presetProviders'>>): Promise<{ ok: boolean; warnings: string[] }> {
+    const res = await fetch(`${BASE}/text-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '保存文本设置失败');
+    }
+    return res.json();
+}
+
+export async function fetchModelLanguageOverride(videoProvider: string, modelId: string): Promise<string | null> {
+    const params = new URLSearchParams({ videoProvider, modelId });
+    const res = await fetch(`${BASE}/text-settings/model-languages?${params}`);
+    if (!res.ok) throw new Error('获取模型语言设置失败');
+    const data = await res.json();
+    return data.language;
+}
+
+export async function updateModelLanguageOverride(videoProvider: string, modelId: string, language: string): Promise<void> {
+    const res = await fetch(`${BASE}/text-settings/model-languages`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoProvider, modelId, language }),
+    });
+    if (!res.ok) throw new Error('保存模型语言设置失败');
+}
+
+export async function fetchRemoteModels(provider: {
+    name: string;
+    baseUrl: string;
+    apiKey: string;
+    apiKeySource: string;
+    appCode?: string;
+}): Promise<{ id: string; owned_by?: string }[]> {
+    const res = await fetch(`${BASE}/text-settings/fetch-models`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            providerName: provider.name,
+            baseUrl: provider.baseUrl,
+            apiKey: provider.apiKey,
+            apiKeySource: provider.apiKeySource,
+            appCode: provider.appCode,
+        }),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '获取远程模型列表失败');
+    }
+    return res.json();
+}
+
+export interface PromptOptimizeParams {
+    input: string;
+    providerName: string;
+    modelId: string;
+    streaming?: boolean;
+    language?: string;
+}
+
+export async function optimizePrompt(params: PromptOptimizeParams): Promise<{ content: string; finishReason: string | null }> {
+    const res = await fetch(`${BASE}/prompt/optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Prompt 优化失败');
+    }
+    return res.json();
+}
+
+export async function optimizePromptStream(
+    params: PromptOptimizeParams,
+    onChunk: (text: string) => void,
+    onDone: () => void,
+    onError: (err: Error) => void,
+): Promise<{ requestId: string; abort: () => void }> {
+    const controller = new AbortController();
+    const res = await fetch(`${BASE}/prompt/optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...params, streaming: true }),
+        signal: controller.signal,
+    });
+
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Prompt 优化失败');
+    }
+
+    const requestId = res.headers.get('X-Request-Id') || '';
+
+    // 读取 SSE 流
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    (async () => {
+        try {
+            let buffer = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                // 解析 SSE 事件
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        if (data === '[DONE]') {
+                            onDone();
+                            return;
+                        }
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.error) {
+                                onError(new Error(parsed.error));
+                                return;
+                            }
+                            if (parsed.choices?.[0]?.delta?.content) {
+                                onChunk(parsed.choices[0].delta.content);
+                            }
+                        } catch {
+                            // 非 JSON 行，忽略
+                        }
+                    }
+                }
+            }
+            onDone();
+        } catch (err) {
+            if ((err as Error).name !== 'AbortError') {
+                onError(err as Error);
+            }
+        }
+    })();
+
+    return {
+        requestId,
+        abort: () => {
+            controller.abort();
+            // 也通知服务端中断
+            fetch(`${BASE}/prompt/optimize/abort`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ requestId }),
+            }).catch(() => {});
+        },
+    };
+}
+
+export async function abortPromptOptimize(requestId?: string): Promise<void> {
+    await fetch(`${BASE}/prompt/optimize/abort`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+    });
+}
