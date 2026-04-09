@@ -1,6 +1,7 @@
 import { createWriteStream } from 'fs';
 import { mkdir } from 'fs/promises';
 import { dirname } from 'path';
+import OpenAI from 'openai';
 import type {
     VideoProvider,
     CreateTaskParams,
@@ -12,9 +13,11 @@ import type {
     ModelCapabilities,
 } from '../provider.js';
 
-const BASE_URL = 'https://aihubmix.com';
+const DEFAULT_BASE_URL = 'https://aihubmix.com';
 const MODELS_API_URL = 'https://aihubmix.com/api/v1/models';
 const APP_CODE = 'ATUH2466';
+
+type ApiMode = 'direct' | 'openai_sdk';
 
 type AIHubMixStatus = 'queued' | 'in_progress' | 'completed' | 'failed';
 
@@ -119,7 +122,7 @@ const KNOWN_MODELS: Record<string, { displayName: string; capabilities: ModelCap
     },
     'wan2.6-i2v': {
         displayName: '通义万相 2.6 图生视频',
-        disabled: true, disabledReason: '图片上传格式不兼容，暂不可用',
+        disabledReason: '图片上传格式可能不兼容，可能不可用',
         capabilities: {
             i2v: true, i2vOnly: true, firstLastFrame: false, referenceImage: false,
             audio: true, cameraFixed: false, draft: false,
@@ -146,7 +149,7 @@ const KNOWN_MODELS: Record<string, { displayName: string; capabilities: ModelCap
     },
     'wan2.5-i2v-preview': {
         displayName: '通义万相 2.5 图生视频',
-        disabled: true, disabledReason: '图片上传格式不兼容，暂不可用',
+        disabledReason: '图片上传格式可能不兼容，可能不可用',
         capabilities: {
             i2v: true, i2vOnly: true, firstLastFrame: false, referenceImage: false,
             audio: true, cameraFixed: false, draft: false,
@@ -173,7 +176,7 @@ const KNOWN_MODELS: Record<string, { displayName: string; capabilities: ModelCap
     },
     'wan2.2-i2v-plus': {
         displayName: '通义万相 2.2 图生视频',
-        disabled: true, disabledReason: '图片上传格式不兼容，暂不可用',
+        disabledReason: '图片上传格式可能不兼容，可能不可用',
         capabilities: {
             i2v: true, i2vOnly: true, firstLastFrame: false, referenceImage: false,
             audio: false, cameraFixed: false, draft: false,
@@ -217,7 +220,8 @@ const STATIC_FALLBACK_MODELS: ModelInfo[] = Object.entries(KNOWN_MODELS).map(
         id,
         displayName: info.displayName,
         capabilities: info.capabilities,
-        ...(info.disabled ? { disabled: info.disabled, disabledReason: info.disabledReason } : {}),
+        ...(info.disabled ? { disabled: info.disabled } : {}),
+        ...(info.disabledReason ? { disabledReason: info.disabledReason } : {}),
     }),
 );
 
@@ -226,12 +230,26 @@ export class AIHubMixProvider implements VideoProvider {
     readonly displayName = 'AIHubMix';
 
     private apiKey: string;
+    private apiMode: ApiMode = 'openai_sdk';
     private cachedAPIModels: APIModel[] = [];
     private cachedModelInfos: ModelInfo[] = STATIC_FALLBACK_MODELS;
     private modelsUpdatedAt: Date | null = null;
+    private openaiClient: OpenAI | null = null;
 
     constructor(options: AIHubMixProviderOptions) {
         this.apiKey = options.apiKey;
+    }
+
+    /** 获取或创建 OpenAI SDK 客户端实例 */
+    private getOpenAIClient(): OpenAI {
+        if (!this.openaiClient) {
+            this.openaiClient = new OpenAI({
+                apiKey: this.apiKey,
+                baseURL: `${DEFAULT_BASE_URL}/v1`,
+                defaultHeaders: { 'APP-Code': APP_CODE },
+            });
+        }
+        return this.openaiClient;
     }
 
     get models(): string[] {
@@ -239,6 +257,13 @@ export class AIHubMixProvider implements VideoProvider {
     }
 
     getModelsInfo(): ModelInfo[] {
+        if (this.apiMode === 'openai_sdk') {
+            return this.cachedModelInfos.map((m) =>
+                m.id.startsWith('veo-')
+                    ? { ...m, disabled: true, disabledReason: 'Veo 系列不支持 OpenAI SDK 模式，请切换为直接接入 (fetch)' }
+                    : m,
+            );
+        }
         return this.cachedModelInfos;
     }
 
@@ -251,12 +276,27 @@ export class AIHubMixProvider implements VideoProvider {
                 required: true,
                 description: 'AIHubMix 平台的 API Key',
             },
+            {
+                key: 'api_mode',
+                label: '接入方式',
+                required: false,
+                defaultValue: 'openai_sdk',
+                description: '选择 API 接入方式：直接接入使用 fetch 调用，OpenAI SDK 模式使用官方 SDK 调用',
+                options: [
+                    { value: 'direct', label: '直接接入 (fetch)' },
+                    { value: 'openai_sdk', label: 'OpenAI SDK' },
+                ],
+            },
         ];
     }
 
     applySettings(settings: Record<string, string>): void {
         if (settings.api_key) {
             this.apiKey = settings.api_key;
+            this.openaiClient = null; // API Key 变更需要重建客户端
+        }
+        if (settings.api_mode) {
+            this.apiMode = settings.api_mode as ApiMode;
         }
         // 加载缓存的模型列表
         if (settings._cached_models) {
@@ -274,6 +314,7 @@ export class AIHubMixProvider implements VideoProvider {
     getCurrentSettings(): Record<string, string> {
         return {
             api_key: this.getMaskedApiKey(),
+            api_mode: this.apiMode,
         };
     }
 
@@ -286,27 +327,47 @@ export class AIHubMixProvider implements VideoProvider {
     // ── 任务操作 ──────────────────────────────
 
     async createTask(params: CreateTaskParams): Promise<CreateTaskResult> {
+        if (this.apiMode === 'openai_sdk') {
+            return this.createTaskViaSDK(params);
+        }
+        return this.createTaskViaFetch(params);
+    }
+
+    async getStatus(providerTaskId: string): Promise<TaskStatusResult> {
+        if (this.apiMode === 'openai_sdk') {
+            return this.getStatusViaSDK(providerTaskId);
+        }
+        return this.getStatusViaFetch(providerTaskId);
+    }
+
+    async downloadVideo(videoUrl: string, targetPath: string): Promise<void> {
+        if (this.apiMode === 'openai_sdk') {
+            return this.downloadVideoViaSDK(videoUrl, targetPath);
+        }
+        return this.downloadVideoViaFetch(videoUrl, targetPath);
+    }
+
+    // ── Direct (fetch) 实现 ──────────────────
+
+    private async createTaskViaFetch(params: CreateTaskParams): Promise<CreateTaskResult> {
         const extra = params.extra ?? {};
         const body: Record<string, unknown> = {
             model: params.model ?? this.models[0],
             prompt: params.prompt,
         };
 
-        // seconds: 支持直接传 seconds (string) 或从 duration (number) 转换
         if (extra.seconds !== undefined) {
             body.seconds = String(extra.seconds);
         } else if (extra.duration !== undefined) {
             body.seconds = String(extra.duration);
         }
 
-        // size: 支持直接传 size 或从 resolution 转换
         if (extra.size !== undefined) {
             body.size = extra.size;
         } else if (extra.resolution !== undefined) {
             body.size = extra.resolution;
         }
 
-        // 图生视频：input_reference（URL 直接传字符串，base64 转对象格式）
         if (params.imageUrl) {
             const dataUrlMatch = params.imageUrl.match(/^data:([^;]+);base64,(.+)$/);
             if (dataUrlMatch) {
@@ -319,7 +380,7 @@ export class AIHubMixProvider implements VideoProvider {
             }
         }
 
-        const res = await fetch(`${BASE_URL}/v1/videos`, {
+        const res = await fetch(`${DEFAULT_BASE_URL}/v1/videos`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${this.apiKey}`,
@@ -339,9 +400,9 @@ export class AIHubMixProvider implements VideoProvider {
         return { providerTaskId: data.id };
     }
 
-    async getStatus(providerTaskId: string): Promise<TaskStatusResult> {
+    private async getStatusViaFetch(providerTaskId: string): Promise<TaskStatusResult> {
         const res = await fetch(
-            `${BASE_URL}/v1/videos/${encodeURIComponent(providerTaskId)}`,
+            `${DEFAULT_BASE_URL}/v1/videos/${encodeURIComponent(providerTaskId)}`,
             {
                 method: 'GET',
                 headers: {
@@ -364,13 +425,99 @@ export class AIHubMixProvider implements VideoProvider {
             error?: { message?: string } | string;
         };
 
+        return this.mapStatusResult(data, providerTaskId);
+    }
+
+    private async downloadVideoViaFetch(videoUrl: string, targetPath: string): Promise<void> {
+        const res = await fetch(videoUrl, {
+            headers: {
+                'Authorization': `Bearer ${this.apiKey}`,
+                'APP-Code': APP_CODE,
+            },
+        });
+
+        if (!res.ok || !res.body) {
+            throw new Error(
+                `AIHubMix downloadVideo 失败 (${res.status}): 无法下载 ${videoUrl}`,
+            );
+        }
+
+        await this.writeStreamToFile(res.body, targetPath);
+    }
+
+    // ── OpenAI SDK 实现 ──────────────────────
+
+    private async createTaskViaSDK(params: CreateTaskParams): Promise<CreateTaskResult> {
+        const client = this.getOpenAIClient();
+        const extra = params.extra ?? {};
+
+        const createParams: Record<string, unknown> = {
+            model: params.model ?? this.models[0],
+            prompt: params.prompt,
+        };
+
+        if (extra.seconds !== undefined) {
+            createParams.seconds = String(extra.seconds);
+        } else if (extra.duration !== undefined) {
+            createParams.seconds = String(extra.duration);
+        }
+
+        if (extra.size !== undefined) {
+            createParams.size = extra.size;
+        } else if (extra.resolution !== undefined) {
+            createParams.size = extra.resolution;
+        }
+
+        if (params.imageUrl) {
+            createParams.input_reference = { image_url: params.imageUrl };
+        }
+
+        const video = await client.videos.create(createParams as unknown as Parameters<typeof client.videos.create>[0]);
+        return { providerTaskId: video.id };
+    }
+
+    private async getStatusViaSDK(providerTaskId: string): Promise<TaskStatusResult> {
+        const client = this.getOpenAIClient();
+        const video = await client.videos.retrieve(providerTaskId);
+
+        const data = {
+            id: video.id,
+            status: video.status as AIHubMixStatus,
+            error: video.error ? { message: video.error.message } : undefined,
+        };
+
+        return this.mapStatusResult(data, providerTaskId);
+    }
+
+    private async downloadVideoViaSDK(videoUrl: string, targetPath: string): Promise<void> {
+        // 从 videoUrl 中提取 videoId
+        const match = videoUrl.match(/\/v1\/videos\/([^/]+)\/content/);
+        if (match) {
+            const client = this.getOpenAIClient();
+            const response = await client.videos.downloadContent(match[1]);
+            const body = response.body;
+            if (!body) {
+                throw new Error(`AIHubMix downloadVideo 失败: 无法下载 ${videoUrl}`);
+            }
+            await this.writeStreamToFile(body as unknown as ReadableStream<Uint8Array>, targetPath);
+        } else {
+            // fallback: 直接 fetch
+            return this.downloadVideoViaFetch(videoUrl, targetPath);
+        }
+    }
+
+    // ── 共享辅助方法 ──────────────────────────
+
+    private mapStatusResult(
+        data: { id: string; status: AIHubMixStatus; url?: string; error?: { message?: string } | string },
+        providerTaskId: string,
+    ): TaskStatusResult {
         const status = STATUS_MAP[data.status] ?? 'failed';
         const result: TaskStatusResult = { status };
 
         if (status === 'success') {
-            // 始终使用 AIHubMix 的 content 端点，不使用响应中的 url（可能指向上游 Provider）
             result.videoUrl =
-                `${BASE_URL}/v1/videos/${encodeURIComponent(providerTaskId)}/content`;
+                `${DEFAULT_BASE_URL}/v1/videos/${encodeURIComponent(providerTaskId)}/content`;
         }
 
         if (status === 'failed') {
@@ -386,23 +533,10 @@ export class AIHubMixProvider implements VideoProvider {
         return result;
     }
 
-    async downloadVideo(videoUrl: string, targetPath: string): Promise<void> {
-        const res = await fetch(videoUrl, {
-            headers: {
-                'Authorization': `Bearer ${this.apiKey}`,
-                'APP-Code': APP_CODE,
-            },
-        });
-
-        if (!res.ok || !res.body) {
-            throw new Error(
-                `AIHubMix downloadVideo 失败 (${res.status}): 无法下载 ${videoUrl}`,
-            );
-        }
-
+    private async writeStreamToFile(body: ReadableStream<Uint8Array>, targetPath: string): Promise<void> {
         await mkdir(dirname(targetPath), { recursive: true });
 
-        const reader = res.body.getReader();
+        const reader = (body as ReadableStream<Uint8Array>).getReader();
         const writable = createWriteStream(targetPath);
 
         try {
@@ -435,7 +569,7 @@ export class AIHubMixProvider implements VideoProvider {
     async refreshModels(): Promise<ModelInfo[]> {
         const res = await fetch(`${MODELS_API_URL}?type=video`, {
             headers: {
-                ...(this.apiKey ? { 'Authorization': `Bearer ${this.apiKey}` } : {}),
+                'Authorization': `Bearer ${this.apiKey}`,
                 'APP-Code': APP_CODE,
             },
         });
@@ -478,7 +612,8 @@ export class AIHubMixProvider implements VideoProvider {
                     id: m.model_id,
                     displayName: known.displayName,
                     capabilities: known.capabilities,
-                    ...(known.disabled ? { disabled: known.disabled, disabledReason: known.disabledReason } : {}),
+                    ...(known.disabled ? { disabled: known.disabled } : {}),
+                    ...(known.disabledReason ? { disabledReason: known.disabledReason } : {}),
                 };
             }
             // 未知模型：根据 input_modalities 推断基础能力

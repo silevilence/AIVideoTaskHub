@@ -13,6 +13,17 @@ import siliconflowIcon from '../assets/icons/siliconflow.png';
 import volcengineIcon from '../assets/icons/volcengine.png';
 import aihubmixIcon from '../assets/icons/aihubmix.png';
 
+/** 根据模型能力获取可用的生成模式 */
+function getAvailableModes(caps: ModelCapabilities | undefined) {
+    if (!caps) return [];
+    const modes: { value: string; label: string }[] = [];
+    if (!caps.i2vOnly) modes.push({ value: 'text_to_video', label: '文生视频' });
+    if (caps.i2v) modes.push({ value: 'first_frame', label: '首帧图生视频' });
+    if (caps.firstLastFrame) modes.push({ value: 'first_last_frame', label: '首尾帧图生视频' });
+    if (caps.referenceImage) modes.push({ value: 'reference', label: '参考图生视频 (1-4张)' });
+    return modes;
+}
+
 const PROVIDER_ICONS: Record<string, string> = {
     siliconflow: siliconflowIcon,
     volcengine: volcengineIcon,
@@ -86,6 +97,20 @@ export function CreateTaskForm({
     const [volcRefImages, setVolcRefImages] = useState<{ url: string; preview: string }[]>([]);
     const [uploadingRefImage, setUploadingRefImage] = useState(false);
 
+    // 参数暂存：切换 Provider/模型时保存当前参数，切回时恢复
+    const paramStashRef = useRef<Record<string, {
+        ratio: string;
+        resolution: string;
+        duration: string;
+        autoDuration: boolean;
+        generateAudio: boolean;
+        seed: string;
+        cameraFixed: boolean;
+        watermark: boolean;
+        returnLastFrame: boolean;
+        imageMode: string;
+    }>>({});
+
     const providers = Object.keys(providerModels).filter((p) => p !== 'mock');
     const models: ModelInfo[] = provider ? (providerModels[provider] ?? []) : [];
     const currentModelInfo = models.find((m) => m.id === model);
@@ -107,15 +132,7 @@ export function CreateTaskForm({
     const showRefImageInput = hasAdvancedCaps && volcImageMode === 'reference';
 
     // 可选的生成模式
-    const imageModes = useMemo(() => {
-        if (!caps) return [];
-        const modes: { value: string; label: string }[] = [];
-        if (!caps.i2vOnly) modes.push({ value: 'text_to_video', label: '文生视频' });
-        if (caps.i2v) modes.push({ value: 'first_frame', label: '首帧图生视频' });
-        if (caps.firstLastFrame) modes.push({ value: 'first_last_frame', label: '首尾帧图生视频' });
-        if (caps.referenceImage) modes.push({ value: 'reference', label: '参考图生视频 (1-4张)' });
-        return modes;
-    }, [caps]);
+    const imageModes = useMemo(() => getAvailableModes(caps), [caps]);
 
     useEffect(() => {
         // 更新 ref 以便其他 useEffect 能访问到最新值
@@ -207,6 +224,87 @@ export function CreateTaskForm({
         setVolcRefImages([]);
     };
 
+    // 暂存当前参数到 stash
+    const stashCurrentParams = () => {
+        if (!provider || !model) return;
+        const key = `${provider}:${model}`;
+        paramStashRef.current[key] = {
+            ratio: volcRatio,
+            resolution: volcResolution,
+            duration: volcDuration,
+            autoDuration: volcAutoDuration,
+            generateAudio: volcGenerateAudio,
+            seed: volcSeed,
+            cameraFixed: volcCameraFixed,
+            watermark: volcWatermark,
+            returnLastFrame: volcReturnLastFrame,
+            imageMode: volcImageMode,
+        };
+    };
+
+    // 从 stash 恢复参数或应用智能默认值
+    const restoreOrApplyDefaults = (newProvider: string, modelId: string, newCaps?: ModelCapabilities) => {
+        const key = `${newProvider}:${modelId}`;
+        const stashed = paramStashRef.current[key];
+
+        if (stashed && newCaps) {
+            // 恢复暂存值，但验证与新 capabilities 兼容
+            setVolcRatio(newCaps.ratios?.includes(stashed.ratio) ? stashed.ratio : (newCaps.ratios?.[0] ?? '16:9'));
+            setVolcResolution(newCaps.resolutions.includes(stashed.resolution) ? stashed.resolution : newCaps.defaultResolution);
+
+            const dur = parseInt(stashed.duration, 10);
+            if (!isNaN(dur) && dur >= newCaps.durationRange[0] && dur <= newCaps.durationRange[1]) {
+                setVolcDuration(stashed.duration);
+            } else if (newCaps.durationOptions?.length) {
+                setVolcDuration(String(newCaps.durationOptions[0]));
+            } else {
+                setVolcDuration(String(newCaps.durationRange[0]));
+            }
+
+            setVolcAutoDuration(newCaps.autoDuration ? stashed.autoDuration : false);
+            setVolcGenerateAudio(newCaps.audio ? stashed.generateAudio : true);
+            setVolcSeed(stashed.seed);
+            setVolcCameraFixed(stashed.cameraFixed);
+            setVolcWatermark(stashed.watermark);
+            setVolcReturnLastFrame(stashed.returnLastFrame);
+
+            // 恢复生成模式（如果目标模型支持）
+            const modes = getAvailableModes(newCaps);
+            if (modes.some(m => m.value === stashed.imageMode)) {
+                setVolcImageMode(stashed.imageMode as typeof volcImageMode);
+            } else if (newCaps.i2vOnly) {
+                setVolcImageMode('first_frame');
+            } else {
+                setVolcImageMode('text_to_video');
+            }
+        } else if (newCaps) {
+            // 无暂存，使用默认值
+            setVolcRatio(newCaps.ratios?.[0] ?? '16:9');
+            setVolcResolution(newCaps.defaultResolution);
+            setVolcDuration(newCaps.durationOptions?.length ? String(newCaps.durationOptions[0]) : String(newCaps.durationRange[0]));
+            setVolcAutoDuration(false);
+            setVolcGenerateAudio(true);
+            setVolcSeed('');
+            setVolcCameraFixed(false);
+            setVolcWatermark(false);
+            setVolcReturnLastFrame(false);
+            if (newCaps.i2vOnly) setVolcImageMode('first_frame');
+            else setVolcImageMode('text_to_video');
+        } else {
+            // 无 capabilities（简单 Provider）
+            setVolcRatio('16:9');
+            setVolcResolution('720p');
+            setVolcDuration('5');
+            setVolcAutoDuration(false);
+            setVolcGenerateAudio(true);
+            setVolcSeed('');
+            setVolcCameraFixed(false);
+            setVolcWatermark(false);
+            setVolcReturnLastFrame(false);
+            setVolcImageMode('text_to_video');
+        }
+    };
+
     // 应用参数到表单
     const applyParamsToForm = (params: ApplyParams) => {
         setProvider(params.provider);
@@ -281,34 +379,22 @@ export function CreateTaskForm({
     }, [applyParams, providerModels]);
 
     const handleProviderChange = (name: string) => {
+        stashCurrentParams();
         setProvider(name);
         const m = providerModels[name] ?? [];
         const firstModel = m.length > 0 ? (m.find((mi) => !mi.disabled) ?? m[0]).id : '';
         setModel(firstModel);
-        resetVolcState();
-        // 设置默认分辨率
-        if (firstModel) {
-            const info = m.find((mi) => mi.id === firstModel);
-            if (info?.capabilities?.defaultResolution) {
-                setVolcResolution(info.capabilities.defaultResolution);
-            }
-            if (info?.capabilities?.i2vOnly) {
-                setVolcImageMode('first_frame');
-            }
-        }
+        // 图片资源跨 Provider/模型保持不变
+        const newModelInfo = m.find(mi => mi.id === firstModel);
+        restoreOrApplyDefaults(name, firstModel, newModelInfo?.capabilities);
     };
 
     const handleModelChange = (modelId: string) => {
+        stashCurrentParams();
         setModel(modelId);
-        resetVolcState();
+        // 图片资源跨模型保持不变
         const info = models.find((mi) => mi.id === modelId);
-        if (info?.capabilities?.defaultResolution) {
-            setVolcResolution(info.capabilities.defaultResolution);
-        }
-        // i2vOnly 模型自动切换到图生视频模式
-        if (info?.capabilities?.i2vOnly) {
-            setVolcImageMode('first_frame');
-        }
+        restoreOrApplyDefaults(provider, modelId, info?.capabilities);
     };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -536,7 +622,7 @@ export function CreateTaskForm({
                                                         key={m.id}
                                                         type="button"
                                                         disabled={m.disabled}
-                                                        title={m.disabled ? m.disabledReason : undefined}
+                                                        title={m.disabledReason || undefined}
                                                         onClick={() => {
                                                             if (m.disabled) return;
                                                             handleModelChange(m.id);
@@ -554,6 +640,9 @@ export function CreateTaskForm({
                                                             {m.displayName}
                                                             {m.disabled && (
                                                                 <span className="text-[10px] text-orange-500">(不可用)</span>
+                                                            )}
+                                                            {!m.disabled && m.disabledReason && (
+                                                                <span className="text-[10px] text-amber-500">⚠</span>
                                                             )}
                                                         </span>
                                                         {m.displayName !== m.id && (
@@ -579,11 +668,7 @@ export function CreateTaskForm({
                                             type="button"
                                             onClick={() => {
                                                 setVolcImageMode(mode.value as typeof volcImageMode);
-                                                setImageUrl('');
-                                                setPreviewUrl('');
-                                                setVolcLastFrameUrl('');
-                                                setVolcLastFramePreview('');
-                                                setVolcRefImages([]);
+                                                // 图片资源在切换模式时保持不变，UI 会根据当前模式自动显示/隐藏对应的图片输入区
                                                 // 切换到图生视频模式时，若有 i2vDurationOptions，自动设置时长
                                                 const isI2v = mode.value === 'first_frame' || mode.value === 'first_last_frame';
                                                 if (isI2v && caps?.i2vDurationOptions?.length) {

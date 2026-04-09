@@ -101,6 +101,7 @@ export interface ProviderSettingSchema {
     required?: boolean;
     defaultValue?: string;
     description?: string;
+    options?: { value: string; label: string }[];
 }
 
 export interface ProviderSettings {

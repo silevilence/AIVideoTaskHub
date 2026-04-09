@@ -84,6 +84,8 @@ export interface ProviderSettingSchema {
     defaultValue?: string;
     /** 说明 */
     description?: string;
+    /** 可选项列表（设置后前端渲染为下拉框） */
+    options?: { value: string; label: string }[];
 }
 
 /** 视频生成 Provider 统一接口 */

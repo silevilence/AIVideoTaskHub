@@ -6,6 +6,24 @@ import { AIHubMixProvider } from '../src/server/providers/aihubmix-provider.js';
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+// Mock openai module
+const mockVideosCreate = vi.fn();
+const mockVideosRetrieve = vi.fn();
+const mockVideosDownloadContent = vi.fn();
+
+vi.mock('openai', () => {
+    return {
+        default: class MockOpenAI {
+            videos = {
+                create: mockVideosCreate,
+                retrieve: mockVideosRetrieve,
+                downloadContent: mockVideosDownloadContent,
+            };
+            constructor(public opts: Record<string, unknown>) {}
+        },
+    };
+});
+
 function jsonResponse(body: unknown, status = 200): Response {
     return {
         ok: status >= 200 && status < 300,
@@ -52,6 +70,16 @@ describe('AIHubMixProvider', () => {
             const appCodeSetting = schema.find((s) => s.key === 'app_code');
             expect(appCodeSetting).toBeUndefined();
         });
+
+        it('应包含接入方式设置项', () => {
+            const schema = provider.getSettingsSchema();
+            const modeSetting = schema.find((s) => s.key === 'api_mode');
+            expect(modeSetting).toBeDefined();
+            expect(modeSetting!.options).toBeDefined();
+            expect(modeSetting!.options!.length).toBe(2);
+            expect(modeSetting!.options!.some(o => o.value === 'direct')).toBe(true);
+            expect(modeSetting!.options!.some(o => o.value === 'openai_sdk')).toBe(true);
+        });
     });
 
     describe('applySettings / getCurrentSettings', () => {
@@ -79,6 +107,136 @@ describe('AIHubMixProvider', () => {
             const models = provider.getModelsInfo();
             expect(models.some((m) => m.id === 'custom-model')).toBe(true);
         });
+
+        it('应正确应用 API 接入方式设置', () => {
+            provider.applySettings({ api_key: apiKey, api_mode: 'openai_sdk' });
+            const current = provider.getCurrentSettings();
+            expect(current.api_mode).toBe('openai_sdk');
+        });
+
+        it('默认 API 接入方式为 openai_sdk', () => {
+            const current = provider.getCurrentSettings();
+            expect(current.api_mode).toBe('openai_sdk');
+        });
+    });
+
+    describe('API 接入方式', () => {
+        it('直接接入模式应在请求头中包含 APP-Code', async () => {
+            provider.applySettings({ api_key: apiKey, api_mode: 'direct' });
+
+            mockFetch.mockResolvedValueOnce(
+                jsonResponse({ id: 'task-direct', status: 'in_progress' }),
+            );
+
+            await provider.createTask({ prompt: 'test', model: 'wan2.6-t2v' });
+
+            const [url, options] = mockFetch.mock.calls[0];
+            expect(url).toBe('https://aihubmix.com/v1/videos');
+            expect(options.headers['APP-Code']).toBe('ATUH2466');
+        });
+
+        it('OpenAI SDK 模式应通过 videos.create 创建任务', async () => {
+
+            mockVideosCreate.mockResolvedValueOnce({
+                id: 'task-sdk',
+                status: 'in_progress',
+                model: 'wan2.6-t2v',
+                prompt: 'test',
+                seconds: '5',
+                size: '1280x720',
+                created_at: 0,
+                completed_at: null,
+                error: null,
+                expires_at: null,
+                object: 'video',
+                progress: 0,
+                remixed_from_video_id: null,
+            });
+
+            const result = await provider.createTask({ prompt: 'test', model: 'wan2.6-t2v', extra: { seconds: '5' } });
+            expect(result.providerTaskId).toBe('task-sdk');
+            expect(mockVideosCreate).toHaveBeenCalledOnce();
+            expect(mockFetch).not.toHaveBeenCalled();
+
+            const callParams = mockVideosCreate.mock.calls[0][0];
+            expect(callParams.model).toBe('wan2.6-t2v');
+            expect(callParams.prompt).toBe('test');
+            expect(callParams.seconds).toBe('5');
+        });
+
+        it('OpenAI SDK 模式图生视频应使用 image_url 格式', async () => {
+
+            mockVideosCreate.mockResolvedValueOnce({
+                id: 'task-sdk-i2v',
+                status: 'in_progress',
+                model: 'wan2.6-i2v',
+                prompt: 'animate',
+                seconds: '5',
+                size: '1280x720',
+                created_at: 0,
+                completed_at: null,
+                error: null,
+                expires_at: null,
+                object: 'video',
+                progress: 0,
+                remixed_from_video_id: null,
+            });
+
+            await provider.createTask({
+                prompt: 'animate',
+                model: 'wan2.6-i2v',
+                imageUrl: 'https://example.com/image.jpg',
+            });
+
+            const callParams = mockVideosCreate.mock.calls[0][0];
+            expect(callParams.input_reference).toEqual({ image_url: 'https://example.com/image.jpg' });
+        });
+
+        it('OpenAI SDK 模式 getStatus 应调用 SDK 的 videos.retrieve', async () => {
+
+            mockVideosRetrieve.mockResolvedValueOnce({
+                id: 'task-123',
+                status: 'completed',
+                error: null,
+                model: 'wan2.6-t2v',
+                prompt: 'test',
+                seconds: '5',
+                size: '1280x720',
+                created_at: 0,
+                completed_at: 1000,
+                expires_at: null,
+                object: 'video',
+                progress: 100,
+                remixed_from_video_id: null,
+            });
+
+            const result = await provider.getStatus('task-123');
+            expect(result.status).toBe('success');
+            expect(result.videoUrl).toBe('https://aihubmix.com/v1/videos/task-123/content');
+            expect(mockVideosRetrieve).toHaveBeenCalledWith('task-123');
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        it('OpenAI SDK 模式 downloadVideo 应调用 SDK 的 videos.downloadContent', async () => {
+
+            const mockReader = {
+                read: vi.fn()
+                    .mockResolvedValueOnce({ done: false, value: new Uint8Array([1, 2, 3]) })
+                    .mockResolvedValueOnce({ done: true, value: undefined }),
+            };
+            const mockBody = { getReader: () => mockReader };
+            mockVideosDownloadContent.mockResolvedValueOnce({
+                body: mockBody,
+            });
+
+            await provider.downloadVideo(
+                'https://aihubmix.com/v1/videos/task-456/content',
+                '/tmp/test-video.mp4',
+            );
+
+            expect(mockVideosDownloadContent).toHaveBeenCalledWith('task-456');
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
     });
 
     describe('getModelsInfo', () => {
@@ -102,9 +260,34 @@ describe('AIHubMixProvider', () => {
             expect(sora2!.capabilities!.resolutions).toContain('1280x720');
             expect(sora2!.capabilities!.durationRange).toEqual([4, 12]);
         });
+
+        it('SDK 模式下 Veo 系列模型应被禁用', () => {
+            // 默认就是 openai_sdk 模式
+            const models = provider.getModelsInfo();
+            const veoModels = models.filter((m) => m.id.startsWith('veo-'));
+            expect(veoModels.length).toBeGreaterThan(0);
+            for (const m of veoModels) {
+                expect(m.disabled).toBe(true);
+                expect(m.disabledReason).toContain('直接接入');
+            }
+        });
+
+        it('直接接入模式下 Veo 系列模型不应被禁用', () => {
+            provider.applySettings({ api_key: apiKey, api_mode: 'direct' });
+            const models = provider.getModelsInfo();
+            const veoModels = models.filter((m) => m.id.startsWith('veo-'));
+            expect(veoModels.length).toBeGreaterThan(0);
+            for (const m of veoModels) {
+                expect(m.disabled).toBeFalsy();
+            }
+        });
     });
 
     describe('createTask', () => {
+        beforeEach(() => {
+            provider.applySettings({ api_key: apiKey, api_mode: 'direct' });
+        });
+
         it('应使用文生视频提交任务', async () => {
             mockFetch.mockResolvedValueOnce(
                 jsonResponse({ id: 'eyJtb2RlbCI6IndhbjI...', status: 'in_progress' }),
@@ -213,6 +396,10 @@ describe('AIHubMixProvider', () => {
     });
 
     describe('getStatus', () => {
+        beforeEach(() => {
+            provider.applySettings({ api_key: apiKey, api_mode: 'direct' });
+        });
+
         it('应正确映射 in_progress 状态', async () => {
             mockFetch.mockResolvedValueOnce(
                 jsonResponse({ id: 'task-123', status: 'in_progress' }),
@@ -295,7 +482,11 @@ describe('AIHubMixProvider', () => {
     });
 
     describe('downloadVideo', () => {
-        it('应携带 Authorization 头下载视频', async () => {
+        beforeEach(() => {
+            provider.applySettings({ api_key: apiKey, api_mode: 'direct' });
+        });
+
+        it('应携带 Authorization 和 APP-Code 头下载视频', async () => {
             const mockReader = {
                 read: vi.fn()
                     .mockResolvedValueOnce({ done: false, value: new Uint8Array([1, 2, 3]) })
@@ -308,8 +499,6 @@ describe('AIHubMixProvider', () => {
                 body: mockBody,
             } as unknown as Response);
 
-            // 使用模拟的 createWriteStream — 不实际写文件
-            // downloadVideo 内部会调用 mkdir 和 createWriteStream，测试中验证 fetch 调用即可
             await expect(
                 provider.downloadVideo(
                     'https://aihubmix.com/v1/videos/task-123/content',
@@ -320,6 +509,7 @@ describe('AIHubMixProvider', () => {
             const [url, options] = mockFetch.mock.calls[0];
             expect(url).toBe('https://aihubmix.com/v1/videos/task-123/content');
             expect(options.headers['Authorization']).toBe(`Bearer ${apiKey}`);
+            expect(options.headers['APP-Code']).toBe('ATUH2466');
         });
     });
 

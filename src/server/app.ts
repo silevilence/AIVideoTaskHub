@@ -1,8 +1,10 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { readFileSync } from 'fs';
 import type { ProviderRegistry } from './provider-registry.js';
 import { createTaskRouter } from './task-router.js';
+import { getDb } from './database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,7 +28,29 @@ export function createApp(registry?: ProviderRegistry) {
 
   // API 健康检查
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: Date.now() });
+    let dbOk = false;
+    try {
+      const row = getDb().prepare('SELECT 1 AS ok').get() as { ok: number } | undefined;
+      dbOk = row?.ok === 1;
+    } catch {
+      // DB 未初始化或连接异常
+    }
+
+    let version = 'unknown';
+    try {
+      const pkg = JSON.parse(readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'));
+      version = pkg.version;
+    } catch {
+      // 无法读取版本号
+    }
+
+    const healthy = dbOk;
+    res.status(healthy ? 200 : 503).json({
+      status: healthy ? 'ok' : 'degraded',
+      timestamp: Date.now(),
+      version,
+      db: dbOk ? 'ok' : 'unavailable',
+    });
   });
 
   // 挂载任务路由

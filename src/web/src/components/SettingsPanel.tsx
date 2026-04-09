@@ -208,25 +208,46 @@ function VideoSettingsPanel() {
                                     </p>
                                 )}
                                 <div className="flex gap-2 items-center">
-                                    <Input
-                                        id={`${provName}-${field.key}`}
-                                        type={field.secret ? 'password' : 'text'}
-                                        value={editValues[provName]?.[field.key] ?? ''}
-                                        onChange={(e) =>
-                                            setEditValues((ev) => ({
-                                                ...ev,
-                                                [provName]: {
-                                                    ...ev[provName],
-                                                    [field.key]: e.target.value,
-                                                },
-                                            }))
-                                        }
-                                        placeholder={
-                                            ps.values[field.key]
-                                                ? `当前: ${ps.values[field.key]}`
-                                                : `输入 ${field.label}`
-                                        }
-                                    />
+                                    {field.options ? (
+                                        <select
+                                            id={`${provName}-${field.key}`}
+                                            value={editValues[provName]?.[field.key] || ps.values[field.key] || field.defaultValue || ''}
+                                            onChange={(e) =>
+                                                setEditValues((ev) => ({
+                                                    ...ev,
+                                                    [provName]: {
+                                                        ...ev[provName],
+                                                        [field.key]: e.target.value,
+                                                    },
+                                                }))
+                                            }
+                                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        >
+                                            {field.options.map((opt) => (
+                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <Input
+                                            id={`${provName}-${field.key}`}
+                                            type={field.secret ? 'password' : 'text'}
+                                            value={editValues[provName]?.[field.key] ?? ''}
+                                            onChange={(e) =>
+                                                setEditValues((ev) => ({
+                                                    ...ev,
+                                                    [provName]: {
+                                                        ...ev[provName],
+                                                        [field.key]: e.target.value,
+                                                    },
+                                                }))
+                                            }
+                                            placeholder={
+                                                ps.values[field.key]
+                                                    ? `当前: ${ps.values[field.key]}`
+                                                    : `输入 ${field.label}`
+                                            }
+                                        />
+                                    )}
                                 </div>
                             </div>
                         ))}

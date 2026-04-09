@@ -91,6 +91,37 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verify container health check
+        run: |
+          # 拉取刚构建的镜像并启动容器
+          IMAGE="ghcr.io/silevilence/aivideotaskhub:${{ steps.version.outputs.VERSION }}"
+          docker run -d --name health-check-test -p 3001:3000 "$IMAGE"
+
+          # 等待容器启动（最多 30 秒）
+          echo "Waiting for container to start..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3001/api/health > /dev/null 2>&1; then
+              echo "Health check passed!"
+              RESPONSE=$(curl -s http://localhost:3001/api/health)
+              echo "Response: $RESPONSE"
+              # 验证返回 status=ok
+              echo "$RESPONSE" | grep -q '"status":"ok"' || {
+                echo "::error::Health check returned non-ok status: $RESPONSE"
+                docker logs health-check-test
+                docker rm -f health-check-test
+                exit 1
+              }
+              docker rm -f health-check-test
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::Health check failed - container did not become healthy within 30 seconds"
+          docker logs health-check-test
+          docker rm -f health-check-test
+          exit 1
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
