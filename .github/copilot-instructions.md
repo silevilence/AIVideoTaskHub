@@ -4,11 +4,11 @@
 - **项目定位**：个人家用的 AI 视频生成 API 聚合与异步任务管理系统。
 - **架构模式**：前后端一体化（Monolithic），Node.js 负责 API、静态资源托管与后台轮询，单 Docker 镜像部署。
 - **当前代码版本**：1.2.0
-- **最近变更记录**：最新 Change Log 条目为 V1.2.0
+- **最近变更记录**：最新 Change Log 条目为 V1.3.0
 - **已接入平台**：SiliconFlow（硅基流动）、火山引擎 Seedance、AIHubMix。
 
 ## 🛠️ 技术栈与依赖包
-- **后端**：Node.js、Express 5.2.1、better-sqlite3 12.8.0、TypeScript 6.0.2
+- **后端**：Node.js、Express 5.2.1、better-sqlite3 12.8.0、openai 6.34.0、TypeScript 6.0.2
 - **前端**：React 19.2.4、React DOM 19.2.4、Vite 6.4.1、Tailwind CSS 4.2.2、shadcn/ui、Lucide React 1.7.0
 - **测试**：Vitest 2.1.9、Supertest 7.2.2
 - **运行时**：tsx 4.21.0
@@ -64,6 +64,7 @@
 ├── data/                            # 数据目录（数据库、上传、视频、日志）
 ├── package.json
 ├── Dockerfile
+├── Dockerfile.dev                       # 开发环境 Docker 构建（国内镜像加速）
 ├── docker-compose.yml               # 生产部署，使用预构建镜像
 └── docker-compose.dev.yml           # 本地构建镜像的开发部署配置
 ```
@@ -73,7 +74,7 @@
 ### Provider 系统
 - **统一接口**：`VideoProvider` 定义 `createTask`、`getStatus`、`downloadVideo` 等标准方法。
 - **模型能力声明**：`ModelCapabilities` 描述图生视频、首尾帧、参考图、音频、固定镜头、分辨率、时长、比例等能力，前端按能力动态渲染表单。
-- **设置项声明**：`ProviderSettingSchema` 定义设置项的 `key`、`label`、`secret`、`required`、`defaultValue` 和 `description`。
+- **设置项声明**：`ProviderSettingSchema` 定义设置项的 `key`、`label`、`secret`、`required`、`defaultValue`、`description` 和 `options`（可选项列表，设置后前端渲染为下拉框）。
 - **动态模型刷新**：Provider 可选实现 `refreshModels`、`needsModelRefresh`、`getCacheData`。当前 AIHubMix 使用该机制缓存模型列表，并通过设置表持久化更新时间。
 - **注册中心**：`ProviderRegistry` 负责注册、查找和列出 Provider。
 
