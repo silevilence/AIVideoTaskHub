@@ -312,3 +312,12 @@ ${input}
         - [x] 后端服务新增 Health Check 接口，对外暴露服务存活状态
         - [x] 在两份 Docker Compose 配置文件中，分别为对应服务补全 `healthcheck` 配置项
         - [x] 在 GitHub Actions CI 流水线中，对最终构建产物镜像执行健康检查验证；仅当容器健康状态确认正常后，方可判定构建成功，否则标记为构建失败
+
+- [x] **[P2] 火山引擎 See dance 2.0 接入**
+    - [x] 两个模型
+        - [x] doubao-seedance-2-0-fast-260128
+        - [x] doubao-seedance-2-0-260128
+    - [x] 参数
+        - [x] 支持首尾帧、参考图生成，不支持纯文本生成
+        - [x] 480p、720p
+    - [x] 参考文档 `refs/volce/Seedance 2.0.pdf`, `refs/volce/视频生成教程.pdf`

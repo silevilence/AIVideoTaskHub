@@ -34,9 +34,11 @@ import {
     type TextSettings,
 } from './text-settings.js';
 import { callLLM, callLLMStream, fetchLLMModels } from './llm-client.js';
+import { resolveCreateTaskImages } from './image-utils.js';
 
 export function createTaskRouter(registry: ProviderRegistry): Router {
     const router = Router();
+    const dataDir = process.env.DATA_DIR || 'data';
 
     // 视频提供商 API Key 解析辅助
     const ENV_KEY_MAPPING: Record<string, string> = {
@@ -247,11 +249,15 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
 
         try {
             const providerInstance = registry.get(provider)!;
+
+            // 将本地 /uploads/ 路径转换为 base64，确保外部 API 可访问
+            const { resolvedImageUrl, resolvedExtra } = resolveCreateTaskImages(imageUrl, extraParams);
+
             const result = await providerInstance.createTask({
                 prompt,
                 model,
-                imageUrl,
-                extra: extraParams,
+                imageUrl: resolvedImageUrl,
+                extra: resolvedExtra,
             });
             updateTaskStatus(task.id, 'pending', {
                 providerTaskId: result.providerTaskId,

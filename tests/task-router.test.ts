@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 import { initDb, closeDb } from '../src/server/database.js';
 import { insertTask, updateTaskStatus } from '../src/server/task-model.js';
 import { ProviderRegistry } from '../src/server/provider-registry.js';
@@ -121,6 +123,67 @@ describe('任务路由 API', () => {
 
             expect(res.status).toBe(201);
             expect(res.body.image_url).toBe('https://example.com/img.png');
+        });
+
+        it('应将本地 /uploads/ 路径转换为 base64 再传给 provider', async () => {
+            const testDir = path.resolve(process.env.DATA_DIR || 'data', 'uploads');
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, 'test-resolve.png');
+            // 写入一个 1x1 pixel 的 PNG
+            const pngData = Buffer.from(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB' +
+                'Nl7BcQAAAABJRU5ErkJggg==',
+                'base64',
+            );
+            fs.writeFileSync(testFile, pngData);
+
+            try {
+                await request(app)
+                    .post('/api/tasks')
+                    .send({
+                        provider: 'mock',
+                        prompt: '本地图片测试',
+                        imageUrl: '/uploads/test-resolve.png',
+                    });
+
+                const call = (mockProvider.createTask as ReturnType<typeof vi.fn>).mock.calls[0][0];
+                expect(call.imageUrl).toMatch(/^data:image\/png;base64,/);
+                expect(call.imageUrl).not.toBe('/uploads/test-resolve.png');
+            } finally {
+                fs.unlinkSync(testFile);
+            }
+        });
+
+        it('应将 extra 中的本地 /uploads/ 路径也转换为 base64', async () => {
+            const testDir = path.resolve(process.env.DATA_DIR || 'data', 'uploads');
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, 'test-last-frame.png');
+            const pngData = Buffer.from(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB' +
+                'Nl7BcQAAAABJRU5ErkJggg==',
+                'base64',
+            );
+            fs.writeFileSync(testFile, pngData);
+
+            try {
+                await request(app)
+                    .post('/api/tasks')
+                    .send({
+                        provider: 'mock',
+                        prompt: '尾帧图片测试',
+                        imageUrl: 'https://example.com/first.png',
+                        extra: {
+                            lastFrameImageUrl: '/uploads/test-last-frame.png',
+                            referenceImageUrls: ['/uploads/test-last-frame.png'],
+                        },
+                    });
+
+                const call = (mockProvider.createTask as ReturnType<typeof vi.fn>).mock.calls[0][0];
+                expect(call.extra.lastFrameImageUrl).toMatch(/^data:image\/png;base64,/);
+                expect(call.extra.referenceImageUrls[0]).toMatch(/^data:image\/png;base64,/);
+            } finally {
+                fs.unlinkSync(testFile);
+            }
         });
     });
 

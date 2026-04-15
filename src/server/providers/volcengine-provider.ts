@@ -32,6 +32,8 @@ export class VolcEngineProvider implements VideoProvider {
     readonly name = 'volcengine';
     readonly displayName = '火山引擎 Seedance';
     readonly models = [
+        'doubao-seedance-2-0-260128',
+        'doubao-seedance-2-0-fast-260128',
         'doubao-seedance-1-5-pro-251215',
         'doubao-seedance-1-0-pro-250528',
         'doubao-seedance-1-0-pro-fast-251015',
@@ -47,6 +49,42 @@ export class VolcEngineProvider implements VideoProvider {
     private static readonly RATIOS = ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive'];
 
     private static readonly MODEL_INFOS: ModelInfo[] = [
+        {
+            id: 'doubao-seedance-2-0-260128',
+            displayName: 'Seedance 2.0',
+            capabilities: {
+                i2v: true,
+                i2vOnly: true,
+                firstLastFrame: true,
+                referenceImage: true,
+                audio: true,
+                cameraFixed: true,
+                draft: true,
+                resolutions: ['480p', '720p'],
+                durationRange: [4, 15],
+                autoDuration: true,
+                defaultResolution: '720p',
+                ratios: VolcEngineProvider.RATIOS,
+            },
+        },
+        {
+            id: 'doubao-seedance-2-0-fast-260128',
+            displayName: 'Seedance 2.0 Fast',
+            capabilities: {
+                i2v: true,
+                i2vOnly: true,
+                firstLastFrame: true,
+                referenceImage: true,
+                audio: true,
+                cameraFixed: true,
+                draft: true,
+                resolutions: ['480p', '720p'],
+                durationRange: [4, 15],
+                autoDuration: true,
+                defaultResolution: '720p',
+                ratios: VolcEngineProvider.RATIOS,
+            },
+        },
         {
             id: 'doubao-seedance-1-5-pro-251215',
             displayName: 'Seedance 1.5 Pro',

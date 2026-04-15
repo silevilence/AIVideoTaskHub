@@ -3,6 +3,7 @@ import type { ProviderRegistry } from './provider-registry.js';
 import type { VideoProvider } from './provider.js';
 import { getRunningTasks, updateTaskStatus, type Task } from './task-model.js';
 import { logger } from './logger.js';
+import { resolveCreateTaskImages } from './image-utils.js';
 
 export interface TaskPollerOptions {
     registry: ProviderRegistry;
@@ -131,11 +132,15 @@ export class TaskPoller {
     private async resubmitTask(task: Task, provider: VideoProvider): Promise<void> {
         try {
             const extra = task.extra_params ? JSON.parse(task.extra_params) : undefined;
+            const { resolvedImageUrl, resolvedExtra } = resolveCreateTaskImages(
+                task.image_url ?? undefined,
+                extra,
+            );
             const result = await provider.createTask({
                 prompt: task.prompt,
                 model: task.model ?? undefined,
-                imageUrl: task.image_url ?? undefined,
-                extra,
+                imageUrl: resolvedImageUrl,
+                extra: resolvedExtra,
             });
             updateTaskStatus(task.id, 'pending', {
                 providerTaskId: result.providerTaskId,

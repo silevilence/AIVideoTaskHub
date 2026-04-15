@@ -39,6 +39,8 @@ describe('VolcEngineProvider', () => {
         expect(provider.models).toContain('doubao-seedance-1-0-pro-fast-251015');
         expect(provider.models).toContain('doubao-seedance-1-0-lite-t2v-250428');
         expect(provider.models).toContain('doubao-seedance-1-0-lite-i2v-250428');
+        expect(provider.models).toContain('doubao-seedance-2-0-260128');
+        expect(provider.models).toContain('doubao-seedance-2-0-fast-260128');
     });
 
     describe('getSettingsSchema', () => {
@@ -298,6 +300,63 @@ describe('VolcEngineProvider', () => {
             );
             expect(textItems).toHaveLength(0);
         });
+
+        it('应使用 Seedance 2.0 模型提交参考图任务', async () => {
+            mockFetch.mockResolvedValueOnce(
+                jsonResponse({ id: 'cgt-20260401-sd20-ref001' })
+            );
+
+            await provider.createTask({
+                prompt: '参考图风格视频',
+                model: 'doubao-seedance-2-0-260128',
+                extra: {
+                    referenceImageUrls: [
+                        'https://example.com/ref1.png',
+                        'https://example.com/ref2.png',
+                    ],
+                    resolution: '720p',
+                    ratio: 'adaptive',
+                    duration: 11,
+                    generateAudio: true,
+                },
+            });
+
+            const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+            expect(body.model).toBe('doubao-seedance-2-0-260128');
+            expect(body.resolution).toBe('720p');
+            expect(body.ratio).toBe('adaptive');
+            expect(body.duration).toBe(11);
+            expect(body.generate_audio).toBe(true);
+            const imageItems = body.content.filter(
+                (c: { type: string }) => c.type === 'image_url'
+            );
+            expect(imageItems).toHaveLength(2);
+            expect(imageItems[0].role).toBe('reference_image');
+        });
+
+        it('应使用 Seedance 2.0 Fast 模型提交文生视频任务', async () => {
+            mockFetch.mockResolvedValueOnce(
+                jsonResponse({ id: 'cgt-20260401-sd20fast-t2v' })
+            );
+
+            const result = await provider.createTask({
+                prompt: '微距镜头对准叶片上翠绿的玻璃蛙',
+                model: 'doubao-seedance-2-0-fast-260128',
+                extra: {
+                    duration: 8,
+                    ratio: '16:9',
+                },
+            });
+
+            expect(result.providerTaskId).toBe('cgt-20260401-sd20fast-t2v');
+            const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+            expect(body.model).toBe('doubao-seedance-2-0-fast-260128');
+            expect(body.content).toEqual([
+                { type: 'text', text: '微距镜头对准叶片上翠绿的玻璃蛙' },
+            ]);
+            expect(body.duration).toBe(8);
+            expect(body.ratio).toBe('16:9');
+        });
     });
 
     describe('getStatus', () => {
@@ -476,6 +535,50 @@ describe('VolcEngineProvider', () => {
             expect(liteI2v).toBeDefined();
             expect(liteI2v!.capabilities!.referenceImage).toBe(true);
             expect(liteI2v!.capabilities!.i2v).toBe(true);
+        });
+
+        it('Seedance 2.0 应支持完整能力集（首帧、首尾帧、参考图、音频、样片）', () => {
+            const infos = provider.getModelsInfo();
+            const sd20 = infos.find((m) => m.id === 'doubao-seedance-2-0-260128');
+            expect(sd20).toBeDefined();
+            expect(sd20!.displayName).toBe('Seedance 2.0');
+            const caps = sd20!.capabilities!;
+            expect(caps.i2v).toBe(true);
+            expect(caps.i2vOnly).toBe(true);
+            expect(caps.firstLastFrame).toBe(true);
+            expect(caps.referenceImage).toBe(true);
+            expect(caps.audio).toBe(true);
+            expect(caps.cameraFixed).toBe(true);
+            expect(caps.draft).toBe(true);
+            expect(caps.autoDuration).toBe(true);
+            expect(caps.resolutions).toEqual(['480p', '720p']);
+            expect(caps.defaultResolution).toBe('720p');
+            expect(caps.durationRange).toEqual([4, 15]);
+            expect(caps.ratios).toContain('adaptive');
+        });
+
+        it('Seedance 2.0 Fast 应与 Seedance 2.0 能力一致', () => {
+            const infos = provider.getModelsInfo();
+            const sd20fast = infos.find((m) => m.id === 'doubao-seedance-2-0-fast-260128');
+            expect(sd20fast).toBeDefined();
+            expect(sd20fast!.displayName).toBe('Seedance 2.0 Fast');
+            const caps = sd20fast!.capabilities!;
+            expect(caps.i2v).toBe(true);
+            expect(caps.i2vOnly).toBe(true);
+            expect(caps.firstLastFrame).toBe(true);
+            expect(caps.referenceImage).toBe(true);
+            expect(caps.audio).toBe(true);
+            expect(caps.draft).toBe(true);
+            expect(caps.resolutions).toEqual(['480p', '720p']);
+            expect(caps.durationRange).toEqual([4, 15]);
+        });
+
+        it('Seedance 2.0 系列不应支持 1080p', () => {
+            const infos = provider.getModelsInfo();
+            const sd20 = infos.find((m) => m.id === 'doubao-seedance-2-0-260128');
+            const sd20fast = infos.find((m) => m.id === 'doubao-seedance-2-0-fast-260128');
+            expect(sd20!.capabilities!.resolutions).not.toContain('1080p');
+            expect(sd20fast!.capabilities!.resolutions).not.toContain('1080p');
         });
     });
 });
