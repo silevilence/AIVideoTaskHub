@@ -507,7 +507,7 @@ export function PromptLibrary() {
                                         {prompt.tags.length > 0 && (
                                             <div className="flex gap-1 mt-1.5 flex-wrap">
                                                 {prompt.tags.map(tag => (
-                                                    <Badge key={tag} variant="outline" className="text-xs px-1.5 py-0">{tag}</Badge>
+                                                    <Badge key={tag} variant="secondary" className="text-xs px-1.5 py-0">{tag}</Badge>
                                                 ))}
                                             </div>
                                         )}

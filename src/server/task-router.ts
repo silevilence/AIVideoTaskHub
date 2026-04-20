@@ -656,7 +656,6 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
         if (promptId !== undefined) {
             const promptItem = getPromptById(promptId);
             if (!promptItem) {
-                activeAbortControllers.delete(requestId);
                 res.status(400).json({ error: `Prompt ID ${promptId} 不存在` });
                 return;
             }
