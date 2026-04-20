@@ -3,8 +3,8 @@
 ## 📌 项目基本信息
 - **项目定位**：个人家用的 AI 视频生成 API 聚合与异步任务管理系统。
 - **架构模式**：前后端一体化（Monolithic），Node.js 负责 API、静态资源托管与后台轮询，单 Docker 镜像部署。
-- **当前代码版本**：1.2.0
-- **最近变更记录**：最新 Change Log 条目为 V1.3.0
+- **当前代码版本**：1.2.0（以 package.json 为准）
+- **最近变更记录**：最新 Change Log 条目为 V1.3.1
 - **已接入平台**：SiliconFlow（硅基流动）、火山引擎 Seedance、AIHubMix。
 
 ## 🛠️ 技术栈与依赖包
@@ -23,8 +23,10 @@
 │   │   ├── app.ts                   # Express 应用配置（静态资源、API、SPA 回退）
 │   │   ├── index.ts                 # 服务入口（初始化数据库、Provider、轮询器）
 │   │   ├── database.ts              # SQLite 初始化与轻量迁移
+│   │   ├── image-utils.ts           # 创建任务时解析本地上传图片
 │   │   ├── logger.ts                # 控制台 + 文件日志
 │   │   ├── llm-client.ts            # OpenAI/Ollama 兼容的 LLM 客户端
+│   │   ├── prompt-model.ts          # 提示词库与目录的数据访问层
 │   │   ├── provider.ts              # Provider 接口、模型能力声明、设置项声明
 │   │   ├── provider-registry.ts     # Provider 注册中心
 │   │   ├── task-model.ts            # Task/Settings 数据访问层
@@ -48,18 +50,19 @@
 │           │   └── icons/           # 平台图标与应用图标
 │           ├── components/
 │           │   ├── CreateTaskForm.tsx  # 创建任务、套用参数、图片库选择
+│           │   ├── PromptLibrary.tsx   # 提示词库管理、目录管理、默认模板设置
 │           │   ├── PromptOptimizer.tsx # AI 提示词智能优化组件
 │           │   ├── TaskList.tsx        # 任务列表、筛选、预览、下载、套用参数
 │           │   ├── RecycleBin.tsx      # 回收站、分类筛选、恢复、彻底删除
 │           │   ├── SettingsPanel.tsx   # Provider 设置、来源展示、模型刷新
-│           │   ├── TextSettingsPanel.tsx # 文本模型和提示词优化设置面板
+│           │   ├── TextSettingsPanel.tsx # 文本模型与语言设置面板
 │           │   ├── ThemeToggle.tsx
-│           │   └── ui/                # 基础 UI 组件
+│           │   └── ui/                # 基础 UI 组件（含 markdown-editor）
 │           ├── hooks/
 │           │   └── use-theme.ts
 │           └── lib/
 │               └── utils.ts
-├── tests/                           # Provider、路由、轮询器、回收站、UI 逻辑测试
+├── tests/                           # Provider、路由、轮询器、回收站、提示词库、UI 逻辑测试
 ├── refs/                            # 第三方 API 文档缓存
 ├── data/                            # 数据目录（数据库、上传、视频、日志）
 ├── package.json
@@ -77,6 +80,12 @@
 - **设置项声明**：`ProviderSettingSchema` 定义设置项的 `key`、`label`、`secret`、`required`、`defaultValue`、`description` 和 `options`（可选项列表，设置后前端渲染为下拉框）。
 - **动态模型刷新**：Provider 可选实现 `refreshModels`、`needsModelRefresh`、`getCacheData`。当前 AIHubMix 使用该机制缓存模型列表，并通过设置表持久化更新时间。
 - **注册中心**：`ProviderRegistry` 负责注册、查找和列出 Provider。
+
+### Prompt 系统
+- **独立数据层**：`prompt-model.ts` 管理 `prompts` 与 `prompt_folders` 表，并负责默认 Prompt 读写。
+- **系统预置 Prompt**：服务启动时通过 `initSystemPrompts()` 自动补齐内置模板。
+- **模板选择优先级**：提示词优化接口优先使用显式传入的 `promptId`，其次使用全局默认 Prompt，最后回退到 text-settings 中的模板。
+- **编辑约束**：系统预置 Prompt 不允许修改和删除；自定义 Prompt 支持标签、目录和关键字搜索。
 
 ### 任务生命周期
 `pending` → `running` → `success` / `failed`
@@ -110,18 +119,35 @@
 - `key`: 配置键，命名格式 `provider:{providerName}:{settingKey}`
 - `value`: 配置值
 
+#### prompt_folders 表
+- `id`: 自增主键
+- `name`: 目录名称
+- `parent_id`: 父目录 ID，支持一级父子关系
+- `created_at`: 创建时间
+
+#### prompts 表
+- `id`: 自增主键
+- `name`: Prompt 名称
+- `content`: Prompt 模板内容
+- `tags`: 标签 JSON 数组字符串
+- `folder_id`: 所属目录 ID，可为空
+- `is_system`: 是否为系统预置 Prompt
+- `created_at`: 创建时间
+- `updated_at`: 更新时间
+
 ### 数据库迁移策略
-- `database.ts` 在启动时自动创建 `tasks` 与 `settings` 表。
+- `database.ts` 在启动时自动创建 `tasks`、`settings`、`prompt_folders`、`prompts` 表。
 - 对已有库进行轻量迁移：缺少 `deleted_at`、`extra_params`、`purged_at` 时自动补列。
 - 测试环境统一使用 `initDb(':memory:')`。
 
 ### 前端功能模块
 - **CreateTaskForm**：支持 Provider/模型选择、动态参数、图片上传、图片库复用、从任务/回收站套用参数。
-- **PromptOptimizer**：支持对话式提示词优化、流式输出与快速采纳。
+- **PromptLibrary**：支持 Prompt 的新建、编辑、删除、目录分类、默认模板设置和搜索。
+- **PromptOptimizer**：支持对话式提示词优化、流式输出、模板选择与快速采纳。
 - **TaskList**：支持任务筛选、状态展示、视频预览、错误查看、参数详情和参数套用。
 - **RecycleBin**：支持回收站浏览、恢复、彻底删除、媒体大小展示和参数套用。支持按服务商、状态、提示词等筛选。
-- **SettingsPanel**：支持设置保存、显示环境变量/本地保存来源、AIHubMix 模型刷新。
-- **TextSettingsPanel**：支持配置独立的文本 Provider 和多种模型参数项配置。
+- **SettingsPanel**：支持视频设置、文本设置、提示词库三标签切换，并显示环境变量/本地保存来源、AIHubMix 模型刷新。
+- **TextSettingsPanel**：支持配置独立的文本 Provider、模型参数项和视频模型语言覆盖。
 - **ThemeToggle**：管理亮色/暗色主题切换。
 
 ## 🌐 API 端点
@@ -140,8 +166,19 @@
 | GET | `/api/text-settings/model-languages` | 获取默认文本请求语言表 |
 | PUT | `/api/text-settings/model-languages` | 更新文本请求语言表 |
 | POST | `/api/text-settings/fetch-models` | 获取目标文本 Provider 支持的模型 |
-| POST | `/api/prompt/optimize` | 发起 LLM 提示词优化（含流式）|
+| POST | `/api/prompt/optimize` | 发起 LLM 提示词优化（含流式，可指定 `promptId`）|
 | POST | `/api/prompt/optimize/abort` | 取消优化 |
+| GET | `/api/prompts` | 获取 Prompt 列表，支持 `q` 搜索 |
+| GET | `/api/prompts/config/default` | 获取全局默认 Prompt ID |
+| PUT | `/api/prompts/config/default` | 设置全局默认 Prompt ID |
+| GET | `/api/prompts/:id` | 获取单个 Prompt 详情 |
+| POST | `/api/prompts` | 创建自定义 Prompt |
+| PUT | `/api/prompts/:id` | 更新自定义 Prompt |
+| DELETE | `/api/prompts/:id` | 删除自定义 Prompt |
+| GET | `/api/prompt-folders` | 获取 Prompt 目录列表 |
+| POST | `/api/prompt-folders` | 创建 Prompt 目录 |
+| PUT | `/api/prompt-folders/:id` | 重命名 Prompt 目录 |
+| DELETE | `/api/prompt-folders/:id` | 删除 Prompt 目录 |
 | POST | `/api/tasks` | 创建任务 |
 | GET | `/api/tasks` | 获取任务列表，支持 providers/statuses/prompt/startDate/endDate 过滤 |
 | GET | `/api/tasks/:id` | 获取单个任务详情 |
@@ -159,6 +196,7 @@
 - `POLL_INTERVAL_MS`：轮询间隔，默认 5000
 - `MAX_RETRIES`：最大重试次数，默认 3
 - `LOG_LEVEL`：日志级别，默认 `info`
+- `SILICONFLOW_MODEL`：可覆盖 SiliconFlow 默认模型
 - `SILICONFLOW_API_KEY`、`VOLCENGINE_API_KEY`、`AIHUBMIX_API_KEY`：可直接通过环境变量注入 Provider 凭据
 
 ## 💻 开发与命名规范
