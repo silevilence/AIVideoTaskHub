@@ -353,6 +353,7 @@ export interface PromptOptimizeParams {
     modelId: string;
     streaming?: boolean;
     language?: string;
+    promptId?: number;
 }
 
 export async function optimizePrompt(params: PromptOptimizeParams): Promise<{ content: string; finishReason: string | null }> {
@@ -455,4 +456,139 @@ export async function abortPromptOptimize(requestId?: string): Promise<void> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId }),
     });
+}
+
+// ── Prompt 管理 API ──────────────────────────
+
+export interface Prompt {
+    id: number;
+    name: string;
+    content: string;
+    tags: string[];
+    folder_id: number | null;
+    is_system: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PromptFolder {
+    id: number;
+    name: string;
+    parent_id: number | null;
+    created_at: string;
+}
+
+export async function fetchPrompts(query?: string): Promise<Prompt[]> {
+    const params = query ? `?q=${encodeURIComponent(query)}` : '';
+    const res = await fetch(`${BASE}/prompts${params}`);
+    if (!res.ok) throw new Error('获取 Prompt 列表失败');
+    return res.json();
+}
+
+export async function fetchPromptById(id: number): Promise<Prompt> {
+    const res = await fetch(`${BASE}/prompts/${id}`);
+    if (!res.ok) throw new Error('获取 Prompt 详情失败');
+    return res.json();
+}
+
+export async function createPromptApi(params: {
+    name: string;
+    content: string;
+    tags?: string[];
+    folderId?: number | null;
+}): Promise<{ prompt: Prompt; warnings: string[] }> {
+    const res = await fetch(`${BASE}/prompts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '创建 Prompt 失败');
+    }
+    return res.json();
+}
+
+export async function updatePromptApi(id: number, params: {
+    name?: string;
+    content?: string;
+    tags?: string[];
+    folderId?: number | null;
+}): Promise<{ prompt: Prompt; warnings: string[] }> {
+    const res = await fetch(`${BASE}/prompts/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '更新 Prompt 失败');
+    }
+    return res.json();
+}
+
+export async function deletePromptApi(id: number): Promise<void> {
+    const res = await fetch(`${BASE}/prompts/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '删除 Prompt 失败');
+    }
+}
+
+export async function fetchDefaultPromptId(): Promise<number | null> {
+    const res = await fetch(`${BASE}/prompts/config/default`);
+    if (!res.ok) throw new Error('获取默认 Prompt 失败');
+    const data = await res.json();
+    return data.defaultPromptId;
+}
+
+export async function updateDefaultPromptId(promptId: number | null): Promise<void> {
+    const res = await fetch(`${BASE}/prompts/config/default`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ promptId }),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '设置默认 Prompt 失败');
+    }
+}
+
+export async function fetchPromptFolders(): Promise<PromptFolder[]> {
+    const res = await fetch(`${BASE}/prompt-folders`);
+    if (!res.ok) throw new Error('获取目录列表失败');
+    return res.json();
+}
+
+export async function createPromptFolder(name: string, parentId?: number | null): Promise<PromptFolder> {
+    const res = await fetch(`${BASE}/prompt-folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, parentId }),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '创建目录失败');
+    }
+    return res.json();
+}
+
+export async function renamePromptFolder(id: number, name: string): Promise<void> {
+    const res = await fetch(`${BASE}/prompt-folders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '重命名目录失败');
+    }
+}
+
+export async function deletePromptFolder(id: number): Promise<void> {
+    const res = await fetch(`${BASE}/prompt-folders/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '删除目录失败');
+    }
 }

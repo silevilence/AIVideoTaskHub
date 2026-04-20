@@ -4,8 +4,10 @@ import {
     optimizePrompt,
     optimizePromptStream,
     abortPromptOptimize,
+    fetchPrompts,
+    fetchDefaultPromptId,
 } from '../api';
-import type { TextProviderConfig, TextModel } from '../api';
+import type { TextProviderConfig, TextModel, Prompt } from '../api';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { ConfirmDialog } from './ui/dialog';
@@ -18,6 +20,7 @@ import {
     Check,
     Loader2,
     AlertTriangle,
+    BookOpen,
 } from 'lucide-react';
 
 interface PromptOptimizerProps {
@@ -41,10 +44,14 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
     const [promptLanguage, setPromptLanguage] = useState('中文');
     const [confirmClose, setConfirmClose] = useState(false);
     const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
+    const [promptLibrary, setPromptLibrary] = useState<Prompt[]>([]);
+    const [selectedPromptId, setSelectedPromptId] = useState<number | undefined>(undefined);
+    const [promptDropdownOpen, setPromptDropdownOpen] = useState(false);
     const abortRef = useRef<{ abort: () => void } | null>(null);
     const inputChangedRef = useRef(false);
     const initialInputRef = useRef(initialPrompt);
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const promptDropdownRef = useRef<HTMLDivElement>(null);
 
     // 加载文本设置
     useEffect(() => {
@@ -69,6 +76,14 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
         }).catch(() => {
             setError('加载文本设置失败，请先在设置中配置文本提供商');
         });
+
+        // 加载 Prompt 库和默认 Prompt
+        Promise.all([fetchPrompts(), fetchDefaultPromptId()]).then(([prompts, defaultId]) => {
+            setPromptLibrary(prompts);
+            if (defaultId !== null) {
+                setSelectedPromptId(defaultId);
+            }
+        }).catch(() => { /* 非致命 */ });
     }, [open, initialPrompt]);
 
     // 关闭下拉菜单
@@ -76,6 +91,9 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
         const handler = (e: MouseEvent) => {
             if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
                 setProviderDropdownOpen(false);
+            }
+            if (promptDropdownRef.current && !promptDropdownRef.current.contains(e.target as Node)) {
+                setPromptDropdownOpen(false);
             }
         };
         document.addEventListener('mousedown', handler);
@@ -101,10 +119,18 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
         setError('');
         setResult('');
 
+        const optimizeParams = {
+            input: input.trim(),
+            providerName: selectedProvider,
+            modelId: selectedModel,
+            language: promptLanguage,
+            promptId: selectedPromptId,
+        };
+
         try {
             if (streaming) {
                 const handle = await optimizePromptStream(
-                    { input: input.trim(), providerName: selectedProvider, modelId: selectedModel, streaming: true, language: promptLanguage },
+                    { ...optimizeParams, streaming: true },
                     (chunk) => setResult(prev => prev + chunk),
                     () => setGenerateState('done'),
                     (err) => {
@@ -114,12 +140,7 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
                 );
                 abortRef.current = handle;
             } else {
-                const resp = await optimizePrompt({
-                    input: input.trim(),
-                    providerName: selectedProvider,
-                    modelId: selectedModel,
-                    language: promptLanguage,
-                });
+                const resp = await optimizePrompt(optimizeParams);
                 setResult(resp.content);
                 setGenerateState('done');
             }
@@ -127,7 +148,7 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
             setError((err as Error).message);
             setGenerateState('error');
         }
-    }, [selectedProvider, selectedModel, input, streaming]);
+    }, [selectedProvider, selectedModel, input, streaming, selectedPromptId, promptLanguage]);
 
     const handleAbort = () => {
         abortRef.current?.abort();
@@ -178,6 +199,65 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
                             <h3 className="text-base font-semibold">AI 提示词优化</h3>
                         </div>
                         <div className="flex items-center gap-2">
+                            {/* Prompt 模板选择 */}
+                            {promptLibrary.length > 0 && (
+                                <div className="relative" ref={promptDropdownRef}>
+                                    <button
+                                        className="flex items-center gap-1 px-3 py-1.5 text-xs border rounded-md hover:bg-accent transition-colors cursor-pointer"
+                                        onClick={() => setPromptDropdownOpen(!promptDropdownOpen)}
+                                    >
+                                        <BookOpen className="h-3 w-3" />
+                                        <span className="max-w-36 truncate">
+                                            {selectedPromptId
+                                                ? promptLibrary.find(p => p.id === selectedPromptId)?.name || '选择模板'
+                                                : '默认模板'}
+                                        </span>
+                                        <ChevronDown className="h-3 w-3" />
+                                    </button>
+
+                                    {promptDropdownOpen && (
+                                        <div className="absolute right-0 top-full mt-1 w-64 max-h-64 overflow-y-auto bg-popover/100 backdrop-blur-none border rounded-md shadow-lg z-10" style={{ backgroundColor: 'var(--popover)' }}>
+                                            <button
+                                                className={`w-full text-left px-3 py-2 text-xs hover:bg-accent transition-colors cursor-pointer ${
+                                                    !selectedPromptId ? 'bg-accent/60' : ''
+                                                }`}
+                                                onClick={() => {
+                                                    setSelectedPromptId(undefined);
+                                                    setPromptDropdownOpen(false);
+                                                }}
+                                            >
+                                                <span className="font-medium">默认模板</span>
+                                                <span className="text-muted-foreground ml-1">(文本设置中的模板)</span>
+                                            </button>
+                                            {promptLibrary.map(p => (
+                                                <button
+                                                    key={p.id}
+                                                    className={`w-full text-left px-3 py-2 text-xs hover:bg-accent transition-colors cursor-pointer ${
+                                                        selectedPromptId === p.id ? 'bg-accent/60' : ''
+                                                    }`}
+                                                    onClick={() => {
+                                                        setSelectedPromptId(p.id);
+                                                        setPromptDropdownOpen(false);
+                                                    }}
+                                                >
+                                                    <div className="flex items-center gap-1">
+                                                        <span className="font-medium truncate">{p.name}</span>
+                                                        {p.is_system && (
+                                                            <span className="text-muted-foreground text-[10px]">(系统)</span>
+                                                        )}
+                                                    </div>
+                                                    {p.tags.length > 0 && (
+                                                        <div className="text-muted-foreground mt-0.5">
+                                                            {p.tags.join(', ')}
+                                                        </div>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* 模型快速切换下拉 */}
                             <div className="relative" ref={dropdownRef}>
                                 <button

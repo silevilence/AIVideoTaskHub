@@ -54,7 +54,7 @@ export class VolcEngineProvider implements VideoProvider {
             displayName: 'Seedance 2.0',
             capabilities: {
                 i2v: true,
-                i2vOnly: true,
+                i2vOnly: false,
                 firstLastFrame: true,
                 referenceImage: true,
                 audio: true,
@@ -72,7 +72,7 @@ export class VolcEngineProvider implements VideoProvider {
             displayName: 'Seedance 2.0 Fast',
             capabilities: {
                 i2v: true,
-                i2vOnly: true,
+                i2vOnly: false,
                 firstLastFrame: true,
                 referenceImage: true,
                 audio: true,

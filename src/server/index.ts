@@ -8,12 +8,17 @@ import { VolcEngineProvider } from './providers/volcengine-provider.js';
 import { AIHubMixProvider } from './providers/aihubmix-provider.js';
 import { TaskPoller } from './task-poller.js';
 import { logger } from './logger.js';
+import { initSystemPrompts } from './prompt-model.js';
 
 const PORT = process.env.PORT || 3000;
 
 // 初始化数据库
 initDb();
 logger.info('数据库初始化完成');
+
+// 初始化系统预置 Prompt
+initSystemPrompts();
+logger.info('系统 Prompt 初始化完成');
 
 // 初始化 Provider 注册表
 const registry = new ProviderRegistry();

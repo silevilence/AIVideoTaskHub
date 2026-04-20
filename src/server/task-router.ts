@@ -35,6 +35,23 @@ import {
 } from './text-settings.js';
 import { callLLM, callLLMStream, fetchLLMModels } from './llm-client.js';
 import { resolveCreateTaskImages } from './image-utils.js';
+import {
+    getAllPrompts,
+    getPromptById,
+    searchPrompts,
+    createPrompt,
+    updatePrompt,
+    deletePrompt,
+    getAllFolders,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    getDefaultPromptId,
+    setDefaultPromptId,
+    getEffectivePromptContent,
+    type CreatePromptParams,
+    type UpdatePromptParams,
+} from './prompt-model.js';
 
 export function createTaskRouter(registry: ProviderRegistry): Router {
     const router = Router();
@@ -593,12 +610,13 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
 
     // 非流式 Prompt 优化
     router.post('/prompt/optimize', async (req, res) => {
-        const { input, providerName, modelId, streaming, language } = req.body as {
+        const { input, providerName, modelId, streaming, language, promptId } = req.body as {
             input: string;
             providerName: string;
             modelId: string;
             streaming?: boolean;
             language?: string;
+            promptId?: number;
         };
 
         if (!input || typeof input !== 'string') {
@@ -633,8 +651,20 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
             return;
         }
 
-        // 渲染 Prompt 模板
-        const template = getPromptTemplate();
+        // 渲染 Prompt 模板：优先使用指定的 promptId，其次全局默认，最后 text-settings 模板
+        let template: string;
+        if (promptId !== undefined) {
+            const promptItem = getPromptById(promptId);
+            if (!promptItem) {
+                activeAbortControllers.delete(requestId);
+                res.status(400).json({ error: `Prompt ID ${promptId} 不存在` });
+                return;
+            }
+            template = promptItem.content;
+        } else {
+            const effective = getEffectivePromptContent();
+            template = effective.content || getPromptTemplate();
+        }
         const effectiveLanguage = language || settings.promptLanguage || '中文';
         const systemPrompt = renderPromptTemplate(template, input, effectiveLanguage);
 
@@ -721,6 +751,182 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
             }
             res.json({ ok: true, abortedAll: true });
         }
+    });
+
+    // ── Prompt 管理接口 ──────────────────────────
+
+    // 获取所有 Prompt
+    router.get('/prompts', (req, res) => {
+        const { q } = req.query;
+        if (typeof q === 'string' && q.trim()) {
+            res.json(searchPrompts(q.trim()));
+        } else {
+            res.json(getAllPrompts());
+        }
+    });
+
+    // 获取全局默认 Prompt ID（必须在 :id 之前注册）
+    router.get('/prompts/config/default', (_req, res) => {
+        res.json({ defaultPromptId: getDefaultPromptId() });
+    });
+
+    // 设置全局默认 Prompt ID
+    router.put('/prompts/config/default', (req, res) => {
+        const { promptId } = req.body;
+        if (promptId !== null && promptId !== undefined) {
+            const prompt = getPromptById(Number(promptId));
+            if (!prompt) {
+                res.status(404).json({ error: 'Prompt 不存在' });
+                return;
+            }
+            setDefaultPromptId(Number(promptId));
+        } else {
+            setDefaultPromptId(null);
+        }
+        res.json({ ok: true });
+    });
+
+    // 获取单个 Prompt
+    router.get('/prompts/:id', (req, res) => {
+        const id = Number(req.params.id);
+        if (isNaN(id)) {
+            res.status(400).json({ error: '无效的 Prompt ID' });
+            return;
+        }
+        const prompt = getPromptById(id);
+        if (!prompt) {
+            res.status(404).json({ error: 'Prompt 不存在' });
+            return;
+        }
+        res.json(prompt);
+    });
+
+    // 创建自定义 Prompt
+    router.post('/prompts', (req, res) => {
+        const { name, content, tags, folderId } = req.body as CreatePromptParams & { folderId?: number | null };
+        if (!name || typeof name !== 'string' || !name.trim()) {
+            res.status(400).json({ error: '缺少 name' });
+            return;
+        }
+        if (!content || typeof content !== 'string' || !content.trim()) {
+            res.status(400).json({ error: '缺少 content' });
+            return;
+        }
+        // 校验模板
+        const validation = validatePromptTemplate(content);
+        if (!validation.valid) {
+            res.status(400).json({ error: validation.warnings[0] });
+            return;
+        }
+        const prompt = createPrompt({ name: name.trim(), content, tags, folderId });
+        res.status(201).json({ prompt, warnings: validation.warnings });
+    });
+
+    // 更新 Prompt
+    router.put('/prompts/:id', (req, res) => {
+        const id = Number(req.params.id);
+        if (isNaN(id)) {
+            res.status(400).json({ error: '无效的 Prompt ID' });
+            return;
+        }
+        const body = req.body as UpdatePromptParams;
+        // 校验模板内容
+        if (body.content !== undefined) {
+            const validation = validatePromptTemplate(body.content);
+            if (!validation.valid) {
+                res.status(400).json({ error: validation.warnings[0] });
+                return;
+            }
+        }
+        const updated = updatePrompt(id, body);
+        if (!updated) {
+            const existing = getPromptById(id);
+            if (!existing) {
+                res.status(404).json({ error: 'Prompt 不存在' });
+            } else {
+                res.status(403).json({ error: '系统预置 Prompt 不允许修改' });
+            }
+            return;
+        }
+        const warnings = body.content ? validatePromptTemplate(body.content).warnings : [];
+        res.json({ prompt: updated, warnings });
+    });
+
+    // 删除 Prompt
+    router.delete('/prompts/:id', (req, res) => {
+        const id = Number(req.params.id);
+        if (isNaN(id)) {
+            res.status(400).json({ error: '无效的 Prompt ID' });
+            return;
+        }
+        const existing = getPromptById(id);
+        if (!existing) {
+            res.status(404).json({ error: 'Prompt 不存在' });
+            return;
+        }
+        if (existing.is_system) {
+            res.status(403).json({ error: '系统预置 Prompt 不允许删除' });
+            return;
+        }
+        deletePrompt(id);
+        // 如果删除的是全局默认，清空默认设置
+        if (getDefaultPromptId() === id) {
+            setDefaultPromptId(null);
+        }
+        res.json({ ok: true });
+    });
+
+    // ── 目录管理接口 ──────────────────────────
+
+    // 获取所有目录
+    router.get('/prompt-folders', (_req, res) => {
+        res.json(getAllFolders());
+    });
+
+    // 创建目录
+    router.post('/prompt-folders', (req, res) => {
+        const { name, parentId } = req.body;
+        if (!name || typeof name !== 'string' || !name.trim()) {
+            res.status(400).json({ error: '缺少目录名称' });
+            return;
+        }
+        const folder = createFolder(name.trim(), parentId ?? null);
+        res.status(201).json(folder);
+    });
+
+    // 重命名目录
+    router.put('/prompt-folders/:id', (req, res) => {
+        const id = Number(req.params.id);
+        if (isNaN(id)) {
+            res.status(400).json({ error: '无效的目录 ID' });
+            return;
+        }
+        const { name } = req.body;
+        if (!name || typeof name !== 'string' || !name.trim()) {
+            res.status(400).json({ error: '缺少目录名称' });
+            return;
+        }
+        const ok = renameFolder(id, name.trim());
+        if (!ok) {
+            res.status(404).json({ error: '目录不存在' });
+            return;
+        }
+        res.json({ ok: true });
+    });
+
+    // 删除目录
+    router.delete('/prompt-folders/:id', (req, res) => {
+        const id = Number(req.params.id);
+        if (isNaN(id)) {
+            res.status(400).json({ error: '无效的目录 ID' });
+            return;
+        }
+        const ok = deleteFolder(id);
+        if (!ok) {
+            res.status(404).json({ error: '目录不存在' });
+            return;
+        }
+        res.json({ ok: true });
     });
 
     return router;

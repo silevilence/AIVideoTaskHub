@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
     fetchTextSettings,
     updateTextSettings,
@@ -13,7 +13,6 @@ import type {
 } from '../api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
@@ -23,16 +22,12 @@ import {
     Plus,
     Trash2,
     RefreshCw,
-    RotateCcw,
-    AlertTriangle,
     ChevronDown,
     ChevronUp,
     Link2,
     Key,
     Globe,
     Search,
-    Maximize2,
-    Minimize2,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -40,7 +35,6 @@ export function TextSettingsPanel() {
     const [settings, setSettings] = useState<TextSettings | null>(null);
     const [editProviders, setEditProviders] = useState<TextProviderConfig[]>([]);
     const [streaming, setStreaming] = useState(false);
-    const [promptTemplate, setPromptTemplate] = useState('');
     const [promptLanguage, setPromptLanguage] = useState('中文');
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState('');
@@ -48,9 +42,7 @@ export function TextSettingsPanel() {
     const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
     const [fetchingModels, setFetchingModels] = useState<Record<string, boolean>>({});
     const [remoteModels, setRemoteModels] = useState<Record<string, { id: string; owned_by?: string }[]>>({});
-    const [templateWarning, setTemplateWarning] = useState('');
     const [modelSearchQuery, setModelSearchQuery] = useState<Record<string, string>>({});
-    const [templateFullscreen, setTemplateFullscreen] = useState(false);
 
     // 视频提供商名称到 API Key 来源映射
     const VIDEO_PROVIDER_LABELS: Record<string, string> = {
@@ -65,7 +57,6 @@ export function TextSettingsPanel() {
             setSettings(textData);
             setEditProviders(textData.providers);
             setStreaming(textData.streaming);
-            setPromptTemplate(textData.promptTemplate);
             setPromptLanguage(textData.promptLanguage);
         } catch {
             setMessage('获取设置失败');
@@ -185,7 +176,6 @@ export function TextSettingsPanel() {
             await updateTextSettings({
                 providers: editProviders,
                 streaming,
-                promptTemplate,
                 promptLanguage,
             });
             setMessage('已保存');
@@ -198,30 +188,6 @@ export function TextSettingsPanel() {
             setSaving(false);
         }
     };
-
-    const handleResetTemplate = async () => {
-        if (!settings) return;
-        try {
-            await updateTextSettings({ promptTemplate: undefined as unknown as string });
-            await loadSettings();
-            setMessage('已恢复默认模板');
-            setMessageType('success');
-            setTimeout(() => setMessage(''), 2000);
-        } catch {
-            setPromptTemplate(settings.promptTemplate);
-        }
-    };
-
-    // 模板校验
-    useEffect(() => {
-        if (!promptTemplate.includes('${input}')) {
-            setTemplateWarning('模板必须包含 ${input} 占位符');
-        } else if (!promptTemplate.includes('${lang}')) {
-            setTemplateWarning('建议添加 ${lang} 占位符以控制输出语言');
-        } else {
-            setTemplateWarning('');
-        }
-    }, [promptTemplate]);
 
     if (!settings) {
         return <div className="text-center text-muted-foreground py-8">加载中...</div>;
@@ -501,76 +467,6 @@ export function TextSettingsPanel() {
                 </CardContent>
             </Card>
 
-            {/* ── Prompt 模板 ────────────────────── */}
-            {templateFullscreen && (
-                <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col p-6">
-                    <div className="flex items-center justify-between mb-3">
-                        <h3 className="text-base font-semibold">优化 Prompt 模板</h3>
-                        <Button variant="outline" size="sm" onClick={() => setTemplateFullscreen(false)}>
-                            <Minimize2 className="h-4 w-4 mr-1" />
-                            退出全屏
-                        </Button>
-                    </div>
-                    <Textarea
-                        value={promptTemplate}
-                        onChange={e => setPromptTemplate(e.target.value)}
-                        className="flex-1 font-mono text-xs resize-none hidden"
-                        placeholder="输入 Prompt 模板..."
-                    />
-                    <MarkdownEditor
-                        value={promptTemplate}
-                        onChange={setPromptTemplate}
-                        className="flex-1"
-                        placeholder="输入 Prompt 模板..."
-                    />
-                    {templateWarning && (
-                        <p className={`text-xs flex items-center gap-1 mt-2 ${
-                            !promptTemplate.includes('${input}') ? 'text-destructive' : 'text-amber-500'
-                        }`}>
-                            <AlertTriangle className="h-3 w-3" />
-                            {templateWarning}
-                        </p>
-                    )}
-                </div>
-            )}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="text-base flex items-center justify-between">
-                        <span>优化 Prompt 模板</span>
-                        <Button variant="ghost" size="sm" onClick={() => setTemplateFullscreen(true)}>
-                            <Maximize2 className="h-4 w-4" />
-                        </Button>
-                    </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                    <MarkdownEditor
-                        value={promptTemplate}
-                        onChange={setPromptTemplate}
-                        className="min-h-64"
-                        placeholder="输入 Prompt 模板..."
-                    />
-
-                    {templateWarning && (
-                        <p className={`text-xs flex items-center gap-1 ${
-                            !promptTemplate.includes('${input}') ? 'text-destructive' : 'text-amber-500'
-                        }`}>
-                            <AlertTriangle className="h-3 w-3" />
-                            {templateWarning}
-                        </p>
-                    )}
-
-                    <p className="text-xs text-muted-foreground">
-                        支持的占位符：<code className="bg-accent px-1 rounded">{'${input}'}</code>（用户输入，必需）、
-                        <code className="bg-accent px-1 rounded">{'${lang}'}</code>（输出语言，建议）
-                    </p>
-
-                    <Button variant="outline" size="sm" onClick={handleResetTemplate}>
-                        <RotateCcw className="h-3 w-3 mr-1" />
-                        恢复默认模板
-                    </Button>
-                </CardContent>
-            </Card>
-
             {/* ── 固定保存按钮 ────────────────────── */}
             <div className="fixed bottom-4 right-4 z-40 flex items-center gap-3 bg-card border rounded-lg shadow-lg px-4 py-2">
                 {message && (
@@ -580,7 +476,7 @@ export function TextSettingsPanel() {
                 )}
                 <Button
                     onClick={handleSave}
-                    disabled={saving || (!!templateWarning && !promptTemplate.includes('${input}'))}
+                    disabled={saving}
                 >
                     {saving ? (
                         <Save className="h-4 w-4 animate-pulse mr-1.5" />
@@ -711,83 +607,4 @@ function ManualModelAdd({ onAdd }: { onAdd: (model: TextModel) => void }) {
     );
 }
 
-// ── Markdown 语法高亮编辑器 ──────────────────────────
 
-function escapeHtml(text: string): string {
-    return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
-function highlightMarkdown(text: string): string {
-    if (!text) return '';
-    const escaped = escapeHtml(text);
-
-    return escaped
-        // 占位符: ${input}, ${lang}
-        .replace(/\$\{(\w+)\}/g, '<span style="color:var(--primary);font-weight:600">${$1}</span>')
-        // 标题: ### text
-        .replace(/^(#{1,6}\s.*)$/gm, '<span style="color:var(--primary);font-weight:700">$1</span>')
-        // 粗体: **text**
-        .replace(/(\*\*)(.*?)\1/g, '<span style="font-weight:700">$1$2$1</span>')
-        // 斜体: *text* (排除已处理的**)
-        .replace(/(?<!\*)(\*)(?!\*)(.*?)(?<!\*)\1(?!\*)/g, '<span style="font-style:italic">$1$2$1</span>')
-        // 行内代码: `text`
-        .replace(/`([^`]+)`/g, '<span style="background:var(--accent);border-radius:2px;padding:0 2px">`$1`</span>')
-        // 分隔线: ---
-        .replace(/^---$/gm, '<span style="color:var(--muted-foreground)">---</span>')
-        // 有序列表: 1. text
-        .replace(/^(\d+\.\s)/gm, '<span style="color:var(--primary);opacity:0.6">$1</span>')
-        // 无序列表: - text
-        .replace(/^(\s*[-*]\s)/gm, '<span style="color:var(--primary);opacity:0.6">$1</span>');
-}
-
-/** Markdown 语法高亮编辑器（覆盖层方式） */
-function MarkdownEditor({ value, onChange, className, placeholder }: {
-    value: string;
-    onChange: (value: string) => void;
-    className?: string;
-    placeholder?: string;
-}) {
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const highlightRef = useRef<HTMLPreElement>(null);
-
-    const syncScroll = useCallback(() => {
-        if (textareaRef.current && highlightRef.current) {
-            highlightRef.current.scrollTop = textareaRef.current.scrollTop;
-            highlightRef.current.scrollLeft = textareaRef.current.scrollLeft;
-        }
-    }, []);
-
-    const highlighted = useMemo(() => highlightMarkdown(value), [value]);
-
-    const placeholderHtml = placeholder ? `<span style="color:var(--muted-foreground)">${escapeHtml(placeholder)}</span>` : '';
-
-    return (
-        <div className={cn('relative', className)} style={{ minHeight: 'inherit' }}>
-            <pre
-                ref={highlightRef}
-                className="absolute inset-0 overflow-auto m-0 p-3 font-mono text-xs whitespace-pre-wrap wrap-break-word pointer-events-none rounded-md border border-transparent"
-                style={{ lineHeight: '1.5', fontFamily: 'inherit' }}
-                aria-hidden="true"
-                dangerouslySetInnerHTML={{ __html: highlighted || placeholderHtml }}
-            />
-            <textarea
-                ref={textareaRef}
-                value={value}
-                onChange={e => onChange(e.target.value)}
-                onScroll={syncScroll}
-                className="relative w-full h-full font-mono text-xs p-3 bg-transparent resize-none rounded-md border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                style={{
-                    color: 'transparent',
-                    caretColor: 'var(--foreground)',
-                    lineHeight: '1.5',
-                    minHeight: 'inherit',
-                }}
-                spellCheck={false}
-            />
-        </div>
-    );
-}

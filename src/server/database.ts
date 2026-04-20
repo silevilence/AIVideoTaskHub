@@ -44,6 +44,30 @@ export function initDb(dbPath: string = process.env.DB_PATH || DEFAULT_DB_PATH):
         );
     `);
 
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS prompt_folders (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT    NOT NULL,
+            parent_id  INTEGER,
+            created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (parent_id) REFERENCES prompt_folders(id) ON DELETE CASCADE
+        );
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS prompts (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT    NOT NULL,
+            content    TEXT    NOT NULL,
+            tags       TEXT    NOT NULL DEFAULT '[]',
+            folder_id  INTEGER,
+            is_system  INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT    NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (folder_id) REFERENCES prompt_folders(id) ON DELETE SET NULL
+        );
+    `);
+
     // 为已有的数据库添加 deleted_at 字段
     const columns = db.pragma('table_info(tasks)') as { name: string }[];
     if (!columns.some((c) => c.name === 'deleted_at')) {

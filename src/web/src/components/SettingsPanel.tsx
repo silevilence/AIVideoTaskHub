@@ -6,11 +6,12 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
-import { Settings, Save, Check, Search, RefreshCw, Server, Database, Video, MessageSquare } from 'lucide-react';
+import { Settings, Save, Check, Search, RefreshCw, Server, Database, Video, MessageSquare, BookOpen } from 'lucide-react';
 import { TextSettingsPanel } from './TextSettingsPanel';
+import { PromptLibrary } from './PromptLibrary';
 import { cn } from '../lib/utils';
 
-type SettingsTab = 'video' | 'text';
+type SettingsTab = 'video' | 'text' | 'prompts';
 
 export function SettingsPanel() {
     const [activeTab, setActiveTab] = useState<SettingsTab>('video');
@@ -50,10 +51,23 @@ export function SettingsPanel() {
                     <MessageSquare className="h-4 w-4" />
                     文本设置
                 </button>
+                <button
+                    onClick={() => setActiveTab('prompts')}
+                    className={cn(
+                        'flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer',
+                        activeTab === 'prompts'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground',
+                    )}
+                >
+                    <BookOpen className="h-4 w-4" />
+                    提示词库
+                </button>
             </div>
 
             {activeTab === 'video' && <VideoSettingsPanel />}
             {activeTab === 'text' && <TextSettingsPanel />}
+            {activeTab === 'prompts' && <PromptLibrary />}
         </div>
     );
 }

@@ -122,6 +122,14 @@ jobs:
           docker rm -f health-check-test
           exit 1
 
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: silevilence/ai-video-task-hub
+          readme-filepath: ./README.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
