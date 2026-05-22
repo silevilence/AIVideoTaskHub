@@ -55,13 +55,23 @@ AI Video Task Hub 是一个面向个人使用场景的轻量级 AI 视频生成�
 - 设置项支持下拉选择框，配置操作更直观
 - AIHubMix 支持直接接入和 OpenAI SDK 两种调用模式
 - AIHubMix 支持动态模型列表缓存，可手动刷新模型
-- 设置页面拆分为视频设置、文本设置、提示词库三个标签页
+- 设置页面拆分为视频设置、文本设置、提示词库和 MCP 服务四个标签页
 
-### 界面体验
+### MCP 服务（模型上下文协议）
+
+- 内置 MCP 服务端，支持外部 AI 客户端（Cherry Studio、Claude Desktop 等）通过标准协议连接
+- 提供六个工具：模型查询、参数规范查询、任务提交、任务大盘、任务详情、视频资产提取
+- MCP 服务默认随系统自启动，可在设置页一键启停
 
 - 提供明暗主题切换
 - 平台与应用图标已内置
 - 支持图片悬停预览、视频预览和常用操作弹窗
+
+### MCP 服务（模型上下文协议）
+
+- 内置 MCP 服务端，支持外部 AI 客户端（Cherry Studio、Claude Desktop 等）通过标准协议连接
+- 提供六个工具：模型查询、参数规范查询、任务提交、任务大盘、任务详情、视频资产提取
+- MCP 服务默认随系统自启动，可在设置页一键启停
 
 ### 日志与持久化
 
@@ -231,10 +241,13 @@ npm run start
 | GET | /api/trash/:id | 获取回收站任务详情 |
 | POST | /api/trash/:id/restore | 从回收站恢复任务 |
 | DELETE | /api/trash/:id | 彻底删除回收站任务 |
+| GET | /api/mcp/status | 获取 MCP 服务运行状态 |
+| POST | /api/mcp/start | 启动 MCP 服务端 |
+| POST | /api/mcp/stop | 停止 MCP 服务端 |
 
 ## 技术栈
 
-- 后端：Node.js + Express 5.2 + better-sqlite3 12.8 + TypeScript 6
+- 后端：Node.js + Express 5.2 + better-sqlite3 12.8 + @modelcontextprotocol/sdk 1.29 + TypeScript 6
 - 前端：React 19.2 + Vite 6.4 + Tailwind CSS 4.2 + shadcn/ui + Lucide React
 - 测试：Vitest 2.1 + Supertest 7.2
 - 运行：tsx 4.21

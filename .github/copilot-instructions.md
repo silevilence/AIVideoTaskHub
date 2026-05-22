@@ -3,12 +3,12 @@
 ## 📌 项目基本信息
 - **项目定位**：个人家用的 AI 视频生成 API 聚合与异步任务管理系统。
 - **架构模式**：前后端一体化（Monolithic），Node.js 负责 API、静态资源托管与后台轮询，单 Docker 镜像部署。
-- **当前代码版本**：1.2.0（以 package.json 为准）
-- **最近变更记录**：最新 Change Log 条目为 V1.3.1
+- **当前代码版本**：1.4.0（以 package.json 为准）
+- **最近变更记录**：最新 Change Log 条目为 V1.4.0
 - **已接入平台**：SiliconFlow（硅基流动）、火山引擎 Seedance、AIHubMix。
 
 ## 🛠️ 技术栈与依赖包
-- **后端**：Node.js、Express 5.2.1、better-sqlite3 12.8.0、openai 6.34.0、TypeScript 6.0.2
+- **后端**：Node.js、Express 5.2.1、better-sqlite3 12.8.0、openai 6.34.0、@modelcontextprotocol/sdk 1.29.0、zod 4.4.3、TypeScript 6.0.2
 - **前端**：React 19.2.4、React DOM 19.2.4、Vite 6.4.1、Tailwind CSS 4.2.2、shadcn/ui、Lucide React 1.7.0
 - **测试**：Vitest 2.1.9、Supertest 7.2.2
 - **运行时**：tsx 4.21.0
@@ -33,6 +33,9 @@
 │   │   ├── task-poller.ts           # 后台轮询 Worker（状态同步、下载、重试）
 │   │   ├── task-router.ts           # API 路由
 │   │   ├── text-settings.ts         # 文本 AI 和提示词优化设置的数据层
+│   │   ├── mcp/
+│   │   │   ├── mcp-server.ts        # MCP 服务端管理器（生命周期、Streamable HTTP 传输）
+│   │   │   └── mcp-tools.ts         # MCP 工具注册与实现（6 个核心工具）
 │   │   └── providers/
 │   │       ├── mock-provider.ts
 │   │       ├── siliconflow-provider.ts
@@ -54,9 +57,10 @@
 │           │   ├── PromptOptimizer.tsx # AI 提示词智能优化组件
 │           │   ├── TaskList.tsx        # 任务列表、筛选、预览、下载、套用参数
 │           │   ├── RecycleBin.tsx      # 回收站、分类筛选、恢复、彻底删除
-│           │   ├── SettingsPanel.tsx   # Provider 设置、来源展示、模型刷新
+│           │   ├── SettingsPanel.tsx   # Provider 设置、来源展示、模型刷新、MCP 服务
 │           │   ├── TextSettingsPanel.tsx # 文本模型与语言设置面板
 │           │   ├── ThemeToggle.tsx
+│           │   ├── McpSettingsPanel.tsx # MCP 服务启停控制、状态显示、工具列表
 │           │   └── ui/                # 基础 UI 组件（含 markdown-editor）
 │           ├── hooks/
 │           │   └── use-theme.ts
@@ -73,6 +77,24 @@
 ```
 
 ## 🏗️ 核心架构概念
+
+### MCP 服务
+- **协议基础**：基于 MCP 官方 TypeScript SDK（`@modelcontextprotocol/sdk`），使用 Streamable HTTP 传输协议。
+- **生命周期管理**：`McpServerManager` 负责服务端的启动、停止和状态查询，默认随 Express 服务自启动。
+- **工具注册**：通过 `registerAllTools()` 向 `McpServer` 注册 6 个标准化工具（见下方工具列表）。
+- **端点集成**：MCP 端点挂载在 Express 的 `/mcp` 路径，复用 Express 的端口。
+- **CORS 支持**：MCP 端点自动设置跨域响应头，兼容浏览器端 AI 客户端（如 Cherry Studio）。
+- **启停控制**：前端设置页提供一键启停开关；手动停止后记录为显式禁用，下次不再自动启动。
+
+**已注册工具**：
+| 工具名 | 说明 |
+|--------|------|
+| `get_models` | 聚合查询所有供应商当前支持的可用模型矩阵 |
+| `get_param_spec` | 查询指定供应商及模型对应的前置入参约束与配置协议 |
+| `submit_task` | 基于 Prompt、参考图像（URL/Base64）、供应商、模型及动态参数提交生成任务 |
+| `query_all_tasks` | 批量检索全局任务列表，返回任务 ID、状态、模型、Prompt 摘要 |
+| `query_task_detail` | 基于任务 ID 精确查询完整生命周期状态及全量入参快照 |
+| `get_video_asset` | 基于任务 ID 获取视频下载链接（内置状态屏障：仅成功任务可获取） |
 
 ### Provider 系统
 - **统一接口**：`VideoProvider` 定义 `createTask`、`getStatus`、`downloadVideo` 等标准方法。
@@ -146,8 +168,9 @@
 - **PromptOptimizer**：支持对话式提示词优化、流式输出、模板选择与快速采纳。
 - **TaskList**：支持任务筛选、状态展示、视频预览、错误查看、参数详情和参数套用。
 - **RecycleBin**：支持回收站浏览、恢复、彻底删除、媒体大小展示和参数套用。支持按服务商、状态、提示词等筛选。
-- **SettingsPanel**：支持视频设置、文本设置、提示词库三标签切换，并显示环境变量/本地保存来源、AIHubMix 模型刷新。
+- **SettingsPanel**：支持视频设置、文本设置、提示词库、MCP 服务四标签切换，并显示环境变量/本地保存来源、AIHubMix 模型刷新。
 - **TextSettingsPanel**：支持配置独立的文本 Provider、模型参数项和视频模型语言覆盖。
+- **McpSettingsPanel**：MCP 服务启停控制、运行状态显示、连接地址复制、工具列表展示。
 - **ThemeToggle**：管理亮色/暗色主题切换。
 
 ## 🌐 API 端点
@@ -188,6 +211,9 @@
 | GET | `/api/trash/:id` | 获取回收站任务详情 |
 | POST | `/api/trash/:id/restore` | 恢复回收站任务 |
 | DELETE | `/api/trash/:id` | 彻底删除回收站任务 |
+| GET | `/api/mcp/status` | 获取 MCP 服务运行状态 |
+| POST | `/api/mcp/start` | 启动 MCP 服务端 |
+| POST | `/api/mcp/stop` | 停止 MCP 服务端 |
 
 ## 🔐 环境变量与运行时约定
 - `PORT`：服务端口，默认 3000
