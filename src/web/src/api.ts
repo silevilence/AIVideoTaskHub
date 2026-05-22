@@ -592,3 +592,39 @@ export async function deletePromptFolder(id: number): Promise<void> {
         throw new Error(body.error || '删除目录失败');
     }
 }
+
+// ── MCP 服务 API ──────────────────────────
+
+export interface McpStatus {
+    running: boolean;
+    sessionId?: string;
+    reason?: string;
+}
+
+export async function fetchMcpStatus(): Promise<McpStatus> {
+    const res = await fetch(`${BASE}/mcp/status`);
+    if (!res.ok) throw new Error('获取 MCP 状态失败');
+    return res.json();
+}
+
+export async function startMcpServer(): Promise<McpStatus> {
+    const res = await fetch(`${BASE}/mcp/start`, {
+        method: 'POST',
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '启动 MCP 服务失败');
+    }
+    return res.json();
+}
+
+export async function stopMcpServer(): Promise<McpStatus> {
+    const res = await fetch(`${BASE}/mcp/stop`, {
+        method: 'POST',
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '停止 MCP 服务失败');
+    }
+    return res.json();
+}

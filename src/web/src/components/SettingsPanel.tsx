@@ -9,9 +9,10 @@ import { Badge } from './ui/badge';
 import { Settings, Save, Check, Search, RefreshCw, Server, Database, Video, MessageSquare, BookOpen } from 'lucide-react';
 import { TextSettingsPanel } from './TextSettingsPanel';
 import { PromptLibrary } from './PromptLibrary';
+import { McpSettingsPanel } from './McpSettingsPanel';
 import { cn } from '../lib/utils';
 
-type SettingsTab = 'video' | 'text' | 'prompts';
+type SettingsTab = 'video' | 'text' | 'prompts' | 'mcp';
 
 export function SettingsPanel() {
     const [activeTab, setActiveTab] = useState<SettingsTab>('video');
@@ -63,11 +64,24 @@ export function SettingsPanel() {
                     <BookOpen className="h-4 w-4" />
                     提示词库
                 </button>
+                <button
+                    onClick={() => setActiveTab('mcp')}
+                    className={cn(
+                        'flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer',
+                        activeTab === 'mcp'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground',
+                    )}
+                >
+                    <Server className="h-4 w-4" />
+                    MCP 服务
+                </button>
             </div>
 
             {activeTab === 'video' && <VideoSettingsPanel />}
             {activeTab === 'text' && <TextSettingsPanel />}
             {activeTab === 'prompts' && <PromptLibrary />}
+            {activeTab === 'mcp' && <McpSettingsPanel />}
         </div>
     );
 }

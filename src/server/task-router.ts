@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type { ProviderRegistry } from './provider-registry.js';
+import type { McpServerManager } from './mcp/mcp-server.js';
 import {
     insertTask,
     getTaskById,
@@ -53,7 +54,7 @@ import {
     type UpdatePromptParams,
 } from './prompt-model.js';
 
-export function createTaskRouter(registry: ProviderRegistry): Router {
+export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpServerManager): Router {
     const router = Router();
     const dataDir = process.env.DATA_DIR || 'data';
 
@@ -926,6 +927,47 @@ export function createTaskRouter(registry: ProviderRegistry): Router {
             return;
         }
         res.json({ ok: true });
+    });
+
+    // ── MCP 服务控制接口 ──────────────────────
+
+    // 获取 MCP 服务状态
+    router.get('/mcp/status', (_req, res) => {
+        if (!mcpManager) {
+            res.json({ running: false, reason: 'MCP 管理器未初始化' });
+            return;
+        }
+        res.json(mcpManager.getStatus());
+    });
+
+    // 启动 MCP 服务
+    router.post('/mcp/start', async (_req, res) => {
+        if (!mcpManager) {
+            res.status(500).json({ error: 'MCP 管理器未初始化' });
+            return;
+        }
+        try {
+            await mcpManager.start();
+            res.json(mcpManager.getStatus());
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            res.status(500).json({ error: `启动失败: ${message}` });
+        }
+    });
+
+    // 停止 MCP 服务
+    router.post('/mcp/stop', async (req, res) => {
+        if (!mcpManager) {
+            res.status(500).json({ error: 'MCP 管理器未初始化' });
+            return;
+        }
+        try {
+            await mcpManager.stop();
+            res.json(mcpManager.getStatus());
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            res.status(500).json({ error: `停止失败: ${message}` });
+        }
     });
 
     return router;

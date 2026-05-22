@@ -7,6 +7,7 @@ import { SiliconFlowProvider } from './providers/siliconflow-provider.js';
 import { VolcEngineProvider } from './providers/volcengine-provider.js';
 import { AIHubMixProvider } from './providers/aihubmix-provider.js';
 import { TaskPoller } from './task-poller.js';
+import { McpServerManager } from './mcp/mcp-server.js';
 import { logger } from './logger.js';
 import { initSystemPrompts } from './prompt-model.js';
 
@@ -95,9 +96,26 @@ const poller = new TaskPoller({
 poller.start();
 logger.pollerStarted();
 
-export { registry, poller };
+// 初始化 MCP 服务端管理器
+const mcpManager = new McpServerManager(registry);
 
-const app = createApp(registry);
+// MCP 服务默认自启动（如果之前未显式禁用过）
+const wasDisabled = getSetting('mcp:explicitly_disabled');
+if (wasDisabled !== 'true') {
+  mcpManager.start().catch((err) => {
+    logger.error(`MCP 服务启动失败: ${(err as Error).message}`);
+  });
+  logger.info('MCP 服务已自动启动');
+} else if (McpServerManager.wasEnabled()) {
+  mcpManager.start().catch((err) => {
+    logger.error(`MCP 服务自动恢复失败: ${(err as Error).message}`);
+  });
+  logger.info('MCP 服务已自动恢复');
+}
+
+export { registry, poller, mcpManager };
+
+const app = createApp({ registry, mcpManager });
 
 app.listen(PORT, () => {
   logger.serverStarted(Number(PORT));
