@@ -352,3 +352,192 @@ describe('MCP 工具注册', () => {
         }
     });
 });
+
+describe('MCP 会话重启（DELETE + 重新 initialize）', () => {
+    let registry: ProviderRegistry;
+    let mcpManager: McpServerManager;
+    let app: ReturnType<typeof express>;
+
+    beforeEach(async () => {
+        closeDb();
+        initDb(':memory:');
+        registry = new ProviderRegistry();
+        registry.register(createMockProvider('mock'));
+        mcpManager = new McpServerManager(registry);
+        app = setupApp(registry, mcpManager);
+        await mcpManager.start();
+    });
+
+    afterEach(async () => {
+        if (mcpManager.running) {
+            await mcpManager.stop();
+        }
+    });
+
+    async function doInitialize() {
+        const res = await request(app)
+            .post('/mcp')
+            .set('Accept', 'application/json, text/event-stream')
+            .set('Content-Type', 'application/json')
+            .send({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                    protocolVersion: '2025-03-26',
+                    capabilities: {},
+                    clientInfo: { name: 'test', version: '1.0' },
+                },
+            });
+        if (res.status !== 200) {
+            throw new Error(`INIT FAILED: ${res.status} - ${JSON.stringify(res.body)}`);
+        }
+        return res.headers['mcp-session-id'] || (res as any).header?.['mcp-session-id'] as string | undefined;
+    }
+
+    it('DELETE 后应能重新 initialize（会话终止 → 自动重启传输层）', async () => {
+        // Step 1: 首次初始化
+        const sessionId1 = await doInitialize();
+        expect(sessionId1).toBeDefined();
+
+        // Step 2: 发送 DELETE 终止会话
+        const delRes = await request(app)
+            .delete('/mcp')
+            .set('Accept', 'application/json, text/event-stream')
+            .set('Content-Type', 'application/json')
+            .set('Mcp-Session-Id', sessionId1!);
+
+        expect(delRes.status).toBe(200);
+
+        // 等待异步重启完成
+        await new Promise((r) => setTimeout(r, 100));
+
+        // Step 3: 重新初始化 — 之前会返回 -32600 "Server already initialized"
+        const sessionId2 = await doInitialize();
+        expect(sessionId2).toBeDefined();
+        // 新 session ID 应不同于旧 session
+        expect(sessionId2).not.toBe(sessionId1);
+    });
+
+    it('重复 initialize（无 DELETE）应自动重建传输层并成功', async () => {
+        // Step 1: 首次初始化
+        const sessionId1 = await doInitialize();
+        expect(sessionId1).toBeDefined();
+
+        // Step 2: 不发送 DELETE，直接再次 initialize
+        // 修复前：返回 -32600 "Server already initialized"
+        // 修复后：自动重建传输层，初始化成功
+        const initRes2 = await request(app)
+            .post('/mcp')
+            .set('Accept', 'application/json, text/event-stream')
+            .set('Content-Type', 'application/json')
+            .send({
+                jsonrpc: '2.0',
+                id: 2,
+                method: 'initialize',
+                params: {
+                    protocolVersion: '2025-03-26',
+                    capabilities: {},
+                    clientInfo: { name: 'test', version: '1.0' },
+                },
+            });
+
+        expect(initRes2.status).toBe(200);
+        // 新响应不应包含 "already initialized" 错误
+        if (initRes2.body?.error) {
+            throw new Error(
+                `第二次 initialize 不应返回错误: ${JSON.stringify(initRes2.body)}`,
+            );
+        }
+    });
+
+    it('正常工具调用在重复 initialize 重建后仍可工作', async () => {
+        // Step 1: 首次初始化
+        const sessionId1 = await doInitialize();
+        expect(sessionId1).toBeDefined();
+
+        // 发送 initialized 通知
+        await request(app)
+            .post('/mcp')
+            .set('Accept', 'application/json, text/event-stream')
+            .set('Content-Type', 'application/json')
+            .set('Mcp-Session-Id', sessionId1!)
+            .send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+
+        // Step 2: 重复 initialize（触发自动重建）
+        const initRes2 = await request(app)
+            .post('/mcp')
+            .set('Accept', 'application/json, text/event-stream')
+            .set('Content-Type', 'application/json')
+            .send({
+                jsonrpc: '2.0',
+                id: 2,
+                method: 'initialize',
+                params: {
+                    protocolVersion: '2025-03-26',
+                    capabilities: {},
+                    clientInfo: { name: 'test', version: '1.0' },
+                },
+            });
+        expect(initRes2.status).toBe(200);
+        const sessionId2 = initRes2.headers['mcp-session-id'] || (initRes2 as any).header?.['mcp-session-id'] as string | undefined;
+        expect(sessionId2).toBeDefined();
+
+        // 发送 initialized 通知
+        if (sessionId2) {
+            await request(app)
+                .post('/mcp')
+                .set('Accept', 'application/json, text/event-stream')
+                .set('Content-Type', 'application/json')
+                .set('Mcp-Session-Id', sessionId2)
+                .send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+        }
+
+        // Step 3: 工具列表在新会话中应正常工作
+        const toolsReq = request(app)
+            .post('/mcp')
+            .set('Accept', 'application/json, text/event-stream')
+            .set('Content-Type', 'application/json');
+        if (sessionId2) {
+            toolsReq.set('Mcp-Session-Id', sessionId2);
+        }
+        const res = await toolsReq.send({
+            jsonrpc: '2.0',
+            id: 3,
+            method: 'tools/list',
+        });
+
+        expect(res.status).toBe(200);
+        if (res.body?.result?.tools) {
+            expect(res.body.result.tools.length).toBeGreaterThanOrEqual(1);
+        }
+    });
+
+    it('直接发送 tools/list（不先 initialize）应自动完成握手并返回工具列表', async () => {
+        // 模拟 AstrBot 等客户端：不先 initialize，直接调用 tools/list
+        // 修复前：返回 400 "Bad Request: Server not initialized"
+        // 修复后：自动完成 initialize 握手，正常返回工具列表
+        const res = await request(app)
+            .post('/mcp')
+            .set('Accept', 'application/json, text/event-stream')
+            .set('Content-Type', 'application/json')
+            .send({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/list',
+            });
+
+        // 自动初始化后 tools/list 应成功
+        if (res.status !== 200) {
+            throw new Error(
+                `AUTO-INIT tools/list FAILED: ${res.status} - ${JSON.stringify(res.body)}`,
+            );
+        }
+        expect(res.status).toBe(200);
+
+        // 应能在响应中找到工具列表
+        if (res.body?.result?.tools) {
+            expect(res.body.result.tools.length).toBeGreaterThanOrEqual(1);
+        }
+    });
+});

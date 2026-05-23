@@ -55,8 +55,18 @@ export function createApp(registryOrOptions?: ProviderRegistry | CreateAppOption
 
     let version = 'unknown';
     try {
-      const pkg = JSON.parse(readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'));
-      version = pkg.version;
+      // 多路径尝试读取版本号，兼容源码运行与 Docker 编译产物目录结构
+      const pkgPaths = [
+        path.resolve(__dirname, '../../package.json'), // 源码: src/server -> /
+        path.resolve(process.cwd(), 'package.json'),    // Docker: CWD=/app
+      ];
+      for (const pkgPath of pkgPaths) {
+        try {
+          const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+          version = pkg.version || 'unknown';
+          break;
+        } catch { /* 尝试下一个路径 */ }
+      }
     } catch {
       // 无法读取版本号
     }
@@ -95,6 +105,22 @@ export function createApp(registryOrOptions?: ProviderRegistry | CreateAppOption
       if (req.method === 'OPTIONS') {
         res.status(204).end();
         return;
+      }
+
+      // 兼容性补丁：部分 MCP 客户端（如 AstrBot）发送的 Accept 头
+      // 可能只包含 application/json 而缺少 text/event-stream，
+      // 导致 SDK 返回 406 Not Acceptable。这里自动补全。
+      if (req.method === 'POST' || req.method === 'GET') {
+        const accept = (req.headers['accept'] || '') as string;
+        if (!accept.includes('text/event-stream')) {
+          req.headers['accept'] = accept
+            ? `${accept}, text/event-stream`
+            : 'application/json, text/event-stream';
+        }
+        // 部分客户端不发送 MCP-Protocol-Version 头，补默认值
+        if (!req.headers['mcp-protocol-version']) {
+          req.headers['mcp-protocol-version'] = '2025-03-26';
+        }
       }
 
       // Express 5: req.body 已通过 express.json() 解析

@@ -56,44 +56,7 @@ export class McpServerManager {
             return;
         }
 
-        // 读取 package.json 获取版本号
-        let version = 'unknown';
-        try {
-            const pkgPath = path.resolve(__dirname, '../../../package.json');
-            if (existsSync(pkgPath)) {
-                const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-                version = pkg.version;
-            }
-        } catch {
-            // 忽略，使用默认版本号
-        }
-
-        // 创建 MCP Server 实例
-        this.server = new McpServer(
-            {
-                name: 'ai-video-task-hub',
-                version,
-            },
-            {
-                capabilities: {
-                    tools: {},
-                },
-                instructions:
-                    'AI 视频生成任务管理 MCP 服务。提供模型查询、任务提交、状态追踪、视频资产提取等能力。',
-            },
-        );
-
-        // 注册所有业务工具
-        registerAllTools(this.server, this.registry);
-
-        // 创建 Streamable HTTP 传输
-        this.transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: () => randomUUID(),
-        });
-
-        // 连接 Server 与 Transport
-        await this.server.connect(this.transport);
-        this._running = true;
+        await this._startInternal();
 
         // 持久化启用状态
         setSetting(SETTING_KEY_ENABLED, 'true');
@@ -130,6 +93,78 @@ export class McpServerManager {
     }
 
     /**
+     * 内部重启传输层（不修改持久化设置）。
+     *
+     * 用于在客户端通过 DELETE 正常终止会话后，
+     * 重建传输层以接受新的 initialize 请求。
+     * SDK 的 close() 不会重置 _initialized 标志，
+     * 导致旧传输层拒绝后续的 initialize，因此需要重建实例。
+     */
+    private async _restartTransport(): Promise<void> {
+        // 关闭旧实例（忽略错误，因为可能已被 DELETE 内部关闭）
+        if (this.transport) {
+            try { await this.transport.close(); } catch { /* 忽略 */ }
+        }
+        if (this.server) {
+            try { await this.server.close(); } catch { /* 忽略 */ }
+        }
+
+        this.server = null;
+        this.transport = null;
+        this._running = false;
+
+        // 重新启动（内部调用 start() 但不修改持久化设置）
+        await this._startInternal();
+    }
+
+    /**
+     * 内部启动：创建 McpServer + Transport 并连接，不修改持久化设置。
+     */
+    private async _startInternal(): Promise<void> {
+        if (this._running) return;
+
+        // 多路径尝试读取版本号，兼容源码运行与 Docker 编译产物目录结构
+        let version = 'unknown';
+        try {
+            const pkgPaths = [
+                path.resolve(__dirname, '../../../package.json'), // 源码: src/server/mcp -> /
+                path.resolve(process.cwd(), 'package.json'),       // Docker: CWD=/app
+            ];
+            for (const pkgPath of pkgPaths) {
+                if (existsSync(pkgPath)) {
+                    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+                    version = pkg.version || 'unknown';
+                    break;
+                }
+            }
+        } catch { /* 忽略 */ }
+
+        this.server = new McpServer(
+            {
+                name: 'ai-video-task-hub',
+                version,
+            },
+            {
+                capabilities: { tools: {} },
+                instructions:
+                    'AI 视频生成任务管理 MCP 服务。提供模型查询、任务提交、状态追踪、视频资产提取等能力。',
+            },
+        );
+
+        registerAllTools(this.server, this.registry);
+
+        // enableJsonResponse: true 使用 JSON 响应代替 SSE 流，
+        // 对 AstrBot 等简化客户端更友好，同时 Cherry Studio 完全兼容
+        this.transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            enableJsonResponse: true,
+        });
+
+        await this.server.connect(this.transport);
+        this._running = true;
+    }
+
+    /**
      * 处理 MCP HTTP 请求。
      * 由 Express 路由调用，将请求转发给 Streamable HTTP 传输层。
      */
@@ -144,6 +179,25 @@ export class McpServerManager {
             return;
         }
 
+        // 检测到 initialize 请求但传输层已有 session（上次会话未被 DELETE 清理），
+        // 自动重建传输层以避免 SDK 的 "Server already initialized" 错误。
+        const isInitialize = this._isInitializeRequest(parsedBody);
+        if (isInitialize && this.transport?.sessionId) {
+            logger.info('检测到重复 initialize 请求，自动重建传输层');
+            await this._restartTransport();
+        }
+
+        // 部分 MCP 客户端（如 AstrBot）可能直接发送 tools/list 而不先 initialize。
+        // 此时状态化传输层尚未初始化，SDK 会返回 400 "Server not initialized"。
+        // 为此类请求创建独立的无状态传输层实例来处理，无需预先握手。
+        if (!isInitialize && !this.transport?.sessionId && parsedBody) {
+            logger.info('检测到未初始化会话的请求，使用无状态传输层处理');
+            await this._handleStatelessFallback(req, res, parsedBody);
+            return;
+        }
+
+        const isDelete = req.method === 'DELETE';
+
         try {
             await this.transport.handleRequest(req, res, parsedBody);
         } catch (err) {
@@ -152,6 +206,89 @@ export class McpServerManager {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: 'MCP 内部处理错误' }));
             }
+            return;
+        }
+
+        // DELETE 处理完成后异步重启传输层，确保下次 initialize 可正常进行
+        if (isDelete && this._running) {
+            setImmediate(() => {
+                this._restartTransport().catch((err) => {
+                    logger.error(`MCP 传输层自动重启失败: ${(err as Error).message}`);
+                });
+            });
+        }
+    }
+
+    /**
+     * 检查已解析的请求体是否为 MCP initialize 请求。
+     */
+    private _isInitializeRequest(body: unknown): boolean {
+        if (body && typeof body === 'object' && !Array.isArray(body)) {
+            const obj = body as Record<string, unknown>;
+            return obj.method === 'initialize' && obj.jsonrpc === '2.0';
+        }
+        return false;
+    }
+
+    /**
+     * 使用无状态传输层处理单个请求。
+     *
+     * 为兼容不遵循 MCP Streamable HTTP 完整握手流程的客户端（如 AstrBot），
+     * 创建独立的无状态 McpServer + Transport 实例，无需预先 initialize 即可
+     * 直接响应 tools/list 等业务请求。
+     *
+     * 无状态模式下 sessionIdGenerator 为 undefined，SDK 不进行会话校验，
+     * 但要求一个 Transport 实例只能处理一次请求，因此每次调用都新建实例。
+     */
+    private async _handleStatelessFallback(
+        req: IncomingMessage,
+        res: ServerResponse,
+        parsedBody: unknown,
+    ): Promise<void> {
+        let version = 'unknown';
+        try {
+            const pkgPaths = [
+                path.resolve(__dirname, '../../../package.json'),
+                path.resolve(process.cwd(), 'package.json'),
+            ];
+            for (const pkgPath of pkgPaths) {
+                if (existsSync(pkgPath)) {
+                    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+                    version = pkg.version || 'unknown';
+                    break;
+                }
+            }
+        } catch { /* 忽略 */ }
+
+        const server = new McpServer(
+            { name: 'ai-video-task-hub', version },
+            {
+                capabilities: { tools: {} },
+                instructions:
+                    'AI 视频生成任务管理 MCP 服务。提供模型查询、任务提交、状态追踪、视频资产提取等能力。',
+            },
+        );
+
+        registerAllTools(server, this.registry);
+
+        // 无状态模式：不生成 session ID，每次请求独立
+        const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: undefined,
+            enableJsonResponse: true,
+        });
+
+        try {
+            await server.connect(transport);
+            await transport.handleRequest(req, res, parsedBody);
+        } catch (err) {
+            logger.error(`无状态传输层处理异常: ${(err as Error).message}`);
+            if (!res.headersSent) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'MCP 内部处理错误' }));
+            }
+        } finally {
+            try { await transport.close(); } catch { /* 忽略 */ }
+            try { await server.close(); } catch { /* 忽略 */ }
         }
     }
 
