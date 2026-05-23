@@ -216,7 +216,7 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
                                     </button>
 
                                     {promptDropdownOpen && (
-                                        <div className="absolute right-0 top-full mt-1 w-64 max-h-64 overflow-y-auto bg-popover/100 backdrop-blur-none border rounded-md shadow-lg z-10" style={{ backgroundColor: 'var(--popover)' }}>
+                                        <div className="absolute right-0 top-full mt-1 w-64 max-h-64 overflow-y-auto bg-popover border rounded-md shadow-lg z-10">
                                             <button
                                                 className={`w-full text-left px-3 py-2 text-xs hover:bg-accent transition-colors cursor-pointer ${
                                                     !selectedPromptId ? 'bg-accent/60' : ''
