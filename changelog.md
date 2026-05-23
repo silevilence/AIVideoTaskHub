@@ -1,5 +1,13 @@
 # Change Log
 
+## V1.4.1
+
+### 🐛 Bug 修复
+
+- 修复在 Cherry Studio 中关闭再重新开启 MCP 时提示「Server already initialized」无法连接的问题，现在开关操作可正常反复使用
+- 修复 Docker 部署后 MCP 服务端版本号始终显示为 unknown 的问题，现在可正确读取版本信息
+- 修复 AstrBot 等部分 MCP 客户端添加服务器时提示「HTTP 400 Bad Request」连接失败的问题，现在兼容更多 MCP 客户端
+
 ## V1.4.0
 
 ### ✨ 新功能
