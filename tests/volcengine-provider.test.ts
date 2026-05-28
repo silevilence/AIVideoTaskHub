@@ -544,7 +544,7 @@ describe('VolcEngineProvider', () => {
             expect(sd20!.displayName).toBe('Seedance 2.0');
             const caps = sd20!.capabilities!;
             expect(caps.i2v).toBe(true);
-            expect(caps.i2vOnly).toBe(true);
+            expect(caps.i2vOnly).toBe(false);
             expect(caps.firstLastFrame).toBe(true);
             expect(caps.referenceImage).toBe(true);
             expect(caps.audio).toBe(true);
@@ -564,7 +564,7 @@ describe('VolcEngineProvider', () => {
             expect(sd20fast!.displayName).toBe('Seedance 2.0 Fast');
             const caps = sd20fast!.capabilities!;
             expect(caps.i2v).toBe(true);
-            expect(caps.i2vOnly).toBe(true);
+            expect(caps.i2vOnly).toBe(false);
             expect(caps.firstLastFrame).toBe(true);
             expect(caps.referenceImage).toBe(true);
             expect(caps.audio).toBe(true);
