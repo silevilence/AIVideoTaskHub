@@ -30,6 +30,9 @@ AI Video Task Hub 是一个面向个人使用场景的轻量级 AI 视频生成�
 - 系统内置多套预置模板，覆盖通用视频优化和 Seedance 2.0 场景
 - 提示词优化面板可直接选择指定模板，也可回退到全局默认模板
 - 自定义模板支持占位符校验和 Markdown 高亮编辑体验
+- 提示词优化支持上传参考图片，AI 会先分析图片内容再结合描述优化提示词
+- 智能识别模型是否支持图片理解，自动选择直通优化或前置解析策略
+- 图片描述可手动编辑微调，创建任务时已选图片自动带入优化弹窗
 
 ### 参数复用与素材复用
 
@@ -215,10 +218,11 @@ npm run start
 | GET | /api/text-settings | 获取文本平台与提示词设置 |
 | PUT | /api/text-settings | 更新文本平台与提示词设置 |
 | GET | /api/text-settings/model-languages | 获取特定模型语言覆盖 |
-| PUT | /api/text-settings/model-languages | 更新特定模型语言覆盖 |
-| POST | /api/text-settings/fetch-models | 从兼容服务端获取可用文本模型 |
-| POST | /api/prompt/optimize | 提交提示词优化，可选流式输出和指定 promptId |
-| POST | /api/prompt/optimize/abort | 取消进行中的提示词优化请求 |
+| PUT | /api/text-settings/model-languages | 更新特定模型语言覆盖 || GET | `/api/text-settings/default-vision-model` | 获取默认图像解析模型配置 |
+| PUT | `/api/text-settings/default-vision-model` | 设置默认图像解析模型配置 || POST | /api/text-settings/fetch-models | 从兼容服务端获取可用文本模型 |
+| POST | `/api/prompt/optimize` | 提交提示词优化，可选流式输出、参考图和 promptId |
+| POST | `/api/prompt/optimize/abort` | 取消进行中的提示词优化请求 |
+| POST | `/api/prompt/analyze-images` | 使用视觉模型分析参考图并生成描述文本 |
 | GET | /api/prompts | 获取提示词列表，支持关键词搜索 |
 | GET | /api/prompts/config/default | 获取全局默认提示词 |
 | PUT | /api/prompts/config/default | 设置或清空全局默认提示词 |

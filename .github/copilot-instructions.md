@@ -3,8 +3,8 @@
 ## 📌 项目基本信息
 - **项目定位**：个人家用的 AI 视频生成 API 聚合与异步任务管理系统。
 - **架构模式**：前后端一体化（Monolithic），Node.js 负责 API、静态资源托管与后台轮询，单 Docker 镜像部署。
-- **当前代码版本**：1.4.0（以 package.json 为准）
-- **最近变更记录**：最新 Change Log 条目为 V1.4.0
+- **当前代码版本**：1.4.1（以 package.json 为准）
+- **最近变更记录**：最新 Change Log 条目为 V1.4.2
 - **已接入平台**：SiliconFlow（硅基流动）、火山引擎 Seedance、AIHubMix。
 
 ## 🛠️ 技术栈与依赖包
@@ -25,14 +25,14 @@
 │   │   ├── database.ts              # SQLite 初始化与轻量迁移
 │   │   ├── image-utils.ts           # 创建任务时解析本地上传图片
 │   │   ├── logger.ts                # 控制台 + 文件日志
-│   │   ├── llm-client.ts            # OpenAI/Ollama 兼容的 LLM 客户端
+│   │   ├── llm-client.ts            # LLM 客户端（支持 ContentPart[] 多模态 Vision 消息）
 │   │   ├── prompt-model.ts          # 提示词库与目录的数据访问层
 │   │   ├── provider.ts              # Provider 接口、模型能力声明、设置项声明
 │   │   ├── provider-registry.ts     # Provider 注册中心
 │   │   ├── task-model.ts            # Task/Settings 数据访问层
 │   │   ├── task-poller.ts           # 后台轮询 Worker（状态同步、下载、重试）
 │   │   ├── task-router.ts           # API 路由
-│   │   ├── text-settings.ts         # 文本 AI 和提示词优化设置的数据层
+│   │   ├── text-settings.ts         # 文本 AI 设置（TextModel 含 vision 字段、默认 Vision 模型配置）
 │   │   ├── mcp/
 │   │   │   ├── mcp-server.ts        # MCP 服务端管理器（生命周期、Streamable HTTP 传输）
 │   │   │   └── mcp-tools.ts         # MCP 工具注册与实现（6 个核心工具）
@@ -66,7 +66,7 @@
 │           │   └── use-theme.ts
 │           └── lib/
 │               └── utils.ts
-├── tests/                           # Provider、路由、轮询器、回收站、提示词库、UI 逻辑测试
+├── tests/                           # Provider、路由、轮询器、回收站、提示词库、LLM 客户端、UI 逻辑测试
 ├── refs/                            # 第三方 API 文档缓存
 ├── data/                            # 数据目录（数据库、上传、视频、日志）
 ├── package.json
@@ -108,6 +108,7 @@
 - **系统预置 Prompt**：服务启动时通过 `initSystemPrompts()` 自动补齐内置模板。
 - **模板选择优先级**：提示词优化接口优先使用显式传入的 `promptId`，其次使用全局默认 Prompt，最后回退到 text-settings 中的模板。
 - **编辑约束**：系统预置 Prompt 不允许修改和删除；自定义 Prompt 支持标签、目录和关键字搜索。
+- **图片支持（V1.4.2）**：提示词优化支持上传参考图，采用双轨路由策略。如目标文本模型具有 Vision 能力则图文直通优化（策略 A），否则前置调用 `/api/prompt/analyze-images` 解析图片生成 Caption 后拼入用户输入（策略 B）。
 
 ### 任务生命周期
 `pending` → `running` → `success` / `failed`
@@ -188,9 +189,12 @@
 | PUT | `/api/text-settings` | 更新文本设置 |
 | GET | `/api/text-settings/model-languages` | 获取默认文本请求语言表 |
 | PUT | `/api/text-settings/model-languages` | 更新文本请求语言表 |
+| GET | `/api/text-settings/default-vision-model` | 获取默认图像解析模型 |
+| PUT | `/api/text-settings/default-vision-model` | 设置默认图像解析模型 |
 | POST | `/api/text-settings/fetch-models` | 获取目标文本 Provider 支持的模型 |
-| POST | `/api/prompt/optimize` | 发起 LLM 提示词优化（含流式，可指定 `promptId`）|
+| POST | `/api/prompt/optimize` | 发起 LLM 提示词优化（含流式、图片参考，可指定 `promptId`）|
 | POST | `/api/prompt/optimize/abort` | 取消优化 |
+| POST | `/api/prompt/analyze-images` | 使用 Vision 模型解析参考图生成 Caption |
 | GET | `/api/prompts` | 获取 Prompt 列表，支持 `q` 搜索 |
 | GET | `/api/prompts/config/default` | 获取全局默认 Prompt ID |
 | PUT | `/api/prompts/config/default` | 设置全局默认 Prompt ID |
