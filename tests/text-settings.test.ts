@@ -17,7 +17,10 @@ import {
     updateTextSettings,
     renderPromptTemplate,
     validatePromptTemplate,
+    getDefaultVisionModel,
+    setDefaultVisionModel,
     DEFAULT_PROMPT_TEMPLATE,
+    DEFAULT_CAPTION_INSTRUCTION,
     PRESET_PROVIDERS,
 } from '../src/server/text-settings.js';
 import type { TextProviderConfig } from '../src/server/text-settings.js';
@@ -249,6 +252,92 @@ describe('text-settings', () => {
             for (const p of PRESET_PROVIDERS) {
                 expect(p.type).toBe('openai');
             }
+        });
+    });
+
+    // ── TextModel vision 字段兼容 ──────────────────────────
+
+    describe('TextModel vision 字段', () => {
+        it('旧数据无 vision 字段时读取为 undefined（向后兼容）', () => {
+            const providers: TextProviderConfig[] = [{
+                name: 'test',
+                displayName: 'Test',
+                baseUrl: 'https://test.com',
+                apiKey: 'key',
+                apiKeySource: 'own',
+                models: [{ id: 'm1', displayName: 'M1', reasoning: false } as any],
+                isPreset: false,
+                type: 'openai',
+            }];
+            saveTextProviders(providers);
+            const loaded = getTextProviders();
+            const model = loaded[0].models[0];
+            expect((model as any).vision).toBeUndefined();
+        });
+
+        it('vision 字段可正常读写', () => {
+            const providers: TextProviderConfig[] = [{
+                name: 'test',
+                displayName: 'Test',
+                baseUrl: 'https://test.com',
+                apiKey: 'key',
+                apiKeySource: 'own',
+                models: [{ id: 'm1', displayName: 'M1', reasoning: false, vision: true }],
+                isPreset: false,
+                type: 'openai',
+            }];
+            saveTextProviders(providers);
+            const loaded = getTextProviders();
+            expect(loaded[0].models[0].vision).toBe(true);
+        });
+
+        it('vision 默认为 false 时正确序列化', () => {
+            const providers: TextProviderConfig[] = [{
+                name: 'test',
+                displayName: 'Test',
+                baseUrl: 'https://test.com',
+                apiKey: 'key',
+                apiKeySource: 'own',
+                models: [{ id: 'm2', displayName: 'M2', reasoning: false, vision: false }],
+                isPreset: false,
+                type: 'openai',
+            }];
+            saveTextProviders(providers);
+            const loaded = getTextProviders();
+            expect(loaded[0].models[0].vision).toBe(false);
+        });
+    });
+
+    // ── 默认图像解析模型 ──────────────────────────
+
+    describe('默认图像解析模型', () => {
+        it('未设置时返回 null', () => {
+            expect(getDefaultVisionModel()).toBeNull();
+        });
+
+        it('设置后可正常读取', () => {
+            setDefaultVisionModel('siliconflow-text', 'Qwen/Qwen2.5-VL-72B-Instruct');
+            const result = getDefaultVisionModel();
+            expect(result).toEqual({
+                providerName: 'siliconflow-text',
+                modelId: 'Qwen/Qwen2.5-VL-72B-Instruct',
+            });
+        });
+
+        it('设置空字符串时返回 null', () => {
+            setDefaultVisionModel('test', 'model');
+            setDefaultVisionModel('', '');
+            expect(getDefaultVisionModel()).toBeNull();
+        });
+    });
+
+    // ── Caption 指令常量 ──────────────────────────
+
+    describe('DEFAULT_CAPTION_INSTRUCTION', () => {
+        it('包含描述关键词', () => {
+            expect(DEFAULT_CAPTION_INSTRUCTION).toContain('描述');
+            expect(DEFAULT_CAPTION_INSTRUCTION).toContain('主体');
+            expect(DEFAULT_CAPTION_INSTRUCTION).toContain('场景');
         });
     });
 });

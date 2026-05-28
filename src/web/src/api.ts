@@ -253,6 +253,7 @@ export interface TextModel {
     id: string;
     displayName: string;
     reasoning: boolean;
+    vision: boolean;
 }
 
 export type TextProviderType = 'openai' | 'ollama';
@@ -456,6 +457,52 @@ export async function abortPromptOptimize(requestId?: string): Promise<void> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId }),
     });
+}
+
+// ── 图像解析相关 ──────────────────────────
+
+export interface ImageInfo {
+    url: string;
+    label: string;
+}
+
+export interface AnalyzeImagesParams {
+    images: string[];
+    providerName: string;
+    modelId: string;
+}
+
+export interface AnalyzeImagesResult {
+    captions: string[];
+}
+
+export async function analyzeImages(params: AnalyzeImagesParams): Promise<AnalyzeImagesResult> {
+    const res = await fetch(`${BASE}/prompt/analyze-images`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || '图像解析失败');
+    }
+    return res.json();
+}
+
+export async function fetchDefaultVisionModel(): Promise<{ providerName: string; modelId: string } | null> {
+    const res = await fetch(`${BASE}/text-settings/default-vision-model`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.providerName ? data : null;
+}
+
+export async function updateDefaultVisionModel(providerName: string, modelId: string): Promise<void> {
+    const res = await fetch(`${BASE}/text-settings/default-vision-model`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerName, modelId }),
+    });
+    if (!res.ok) throw new Error('保存默认图像解析模型失败');
 }
 
 // ── Prompt 管理 API ──────────────────────────

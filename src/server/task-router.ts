@@ -30,12 +30,15 @@ import {
     renderPromptTemplate,
     getPromptTemplate,
     getPromptLanguage,
+    getDefaultVisionModel,
+    setDefaultVisionModel,
+    DEFAULT_CAPTION_INSTRUCTION,
     PRESET_PROVIDERS,
     type TextProviderConfig,
     type TextSettings,
 } from './text-settings.js';
-import { callLLM, callLLMStream, fetchLLMModels } from './llm-client.js';
-import { resolveCreateTaskImages } from './image-utils.js';
+import { callLLM, callLLMStream, fetchLLMModels, type ContentPart } from './llm-client.js';
+import { resolveCreateTaskImages, resolveImageUrl } from './image-utils.js';
 import {
     getAllPrompts,
     getPromptById,
@@ -503,7 +506,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
     // 获取文本设置（含预置提供商列表）
     router.get('/text-settings', (_req, res) => {
         const settings = getTextSettings();
-        res.json({ ...settings, presetProviders: PRESET_PROVIDERS });
+        res.json({ ...settings, presetProviders: PRESET_PROVIDERS, defaultVisionModel: getDefaultVisionModel() });
     });
 
     // 更新文本设置
@@ -550,6 +553,22 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
         } else {
             removeModelLanguageOverride(videoProvider, modelId);
         }
+        res.json({ ok: true });
+    });
+
+    // 默认图像解析模型配置
+    router.get('/text-settings/default-vision-model', (_req, res) => {
+        const model = getDefaultVisionModel();
+        if (model) {
+            res.json(model);
+        } else {
+            res.json({ providerName: '', modelId: '' });
+        }
+    });
+
+    router.put('/text-settings/default-vision-model', (req, res) => {
+        const { providerName, modelId } = req.body as { providerName: string; modelId: string };
+        setDefaultVisionModel(providerName || '', modelId || '');
         res.json({ ok: true });
     });
 
@@ -668,6 +687,123 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
         const effectiveLanguage = language || settings.promptLanguage || '中文';
         const systemPrompt = renderPromptTemplate(template, input, effectiveLanguage);
 
+        // ── 图片支持：双轨路由 ──────────────────
+        const images: string[] | undefined = req.body.images;
+        if (images && images.length > 0) {
+            const targetModel = provider.models.find(m => m.id === modelId);
+            const targetHasVision = targetModel?.vision === true;
+
+            if (targetHasVision) {
+                // 策略 A：Vision 直通 —— 构建多模态消息
+                const contentParts: ContentPart[] = [
+                    { type: 'text', text: systemPrompt },
+                ];
+                for (const imgUrl of images) {
+                    contentParts.push({ type: 'image_url', image_url: { url: imgUrl } });
+                }
+
+                const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                const abortController = new AbortController();
+                activeAbortControllers.set(requestId, abortController);
+
+                try {
+                    if (streaming) {
+                        res.setHeader('Content-Type', 'text/event-stream');
+                        res.setHeader('Cache-Control', 'no-cache');
+                        res.setHeader('Connection', 'keep-alive');
+                        res.setHeader('X-Request-Id', requestId);
+
+                        const stream = await callLLMStream({
+                            baseUrl: provider.baseUrl,
+                            apiKey,
+                            model: modelId,
+                            messages: [{ role: 'user', content: contentParts }],
+                            stream: true,
+                            appCode: provider.appCode,
+                            signal: abortController.signal,
+                        });
+
+                        const reader = stream.getReader();
+                        const decoder = new TextDecoder();
+                        try {
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                res.write(decoder.decode(value, { stream: true }));
+                            }
+                        } catch (err) {
+                            if ((err as Error).name !== 'AbortError') {
+                                res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);
+                            }
+                        } finally {
+                            res.write('data: [DONE]\n\n');
+                            res.end();
+                            activeAbortControllers.delete(requestId);
+                        }
+                    } else {
+                        res.setHeader('X-Request-Id', requestId);
+                        const result = await callLLM({
+                            baseUrl: provider.baseUrl,
+                            apiKey,
+                            model: modelId,
+                            messages: [{ role: 'user', content: contentParts }],
+                            appCode: provider.appCode,
+                            signal: abortController.signal,
+                        });
+                        activeAbortControllers.delete(requestId);
+                        res.json({ content: result.content, finishReason: result.finishReason });
+                    }
+                } catch (err) {
+                    activeAbortControllers.delete(requestId);
+                    if ((err as Error).name === 'AbortError') {
+                        res.status(499).json({ error: '请求已中断' });
+                    } else {
+                        logger.error(`Prompt 优化失败（策略A）: ${(err as Error).message}`);
+                        res.status(500).json({ error: (err as Error).message });
+                    }
+                }
+                return;
+            }
+
+            // 目标模型无 vision —— 策略 B 或降级
+            const forceTextOnly: boolean = req.body.forceTextOnly === true;
+
+            if (forceTextOnly) {
+                // 降级：剥离图片，注入占位声明，继续走纯文本流程
+                const placeholder = `[系统提示] 本次优化任务包含 ${images.length} 张参考图像，但当前未配置图像解析模型，以下优化仅基于文本描述进行。\n\n`;
+                const degradedPrompt = placeholder + systemPrompt;
+                // 继续执行到下方的纯文本逻辑（不 return，用新的 prompt 调用）
+                req.body.images = undefined;
+                req.body._degradedPrompt = degradedPrompt;
+            } else {
+                // 检查是否有可用解析模型（优先使用请求中指定的，其次默认）
+                const defaultVision = getDefaultVisionModel();
+                const analysisProv: string = req.body.analysisProvider || defaultVision?.providerName || '';
+                const analysisMod: string = req.body.analysisModel || defaultVision?.modelId || '';
+
+                if (!analysisProv || !analysisMod) {
+                    res.status(400).json({
+                        error: '目标模型不支持图像分析，且未配置图像解析模型。请在设置中配置默认图像解析模型，或勾选强制纯文本模式。',
+                        code: 'NO_ANALYSIS_MODEL',
+                    });
+                    return;
+                }
+
+                // 提示前端先解析图片
+                res.status(400).json({
+                    error: '请先调用 /api/prompt/analyze-images 解析图片',
+                    code: 'ANALYSIS_REQUIRED',
+                    analysisProvider: analysisProv,
+                    analysisModel: analysisMod,
+                });
+                return;
+            }
+        }
+
+        // 降级路径：使用 _degradedPrompt 替换 systemPrompt
+        const finalPrompt: string = (req.body as any)._degradedPrompt || systemPrompt;
+        // ── 图片支持结束 ──────────────────────────
+
         const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const abortController = new AbortController();
         activeAbortControllers.set(requestId, abortController);
@@ -684,7 +820,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
                     baseUrl: provider.baseUrl,
                     apiKey,
                     model: modelId,
-                    messages: [{ role: 'user', content: systemPrompt }],
+                    messages: [{ role: 'user', content: finalPrompt }],
                     stream: true,
                     appCode: provider.appCode,
                     signal: abortController.signal,
@@ -717,7 +853,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
                     baseUrl: provider.baseUrl,
                     apiKey,
                     model: modelId,
-                    messages: [{ role: 'user', content: systemPrompt }],
+                    messages: [{ role: 'user', content: finalPrompt }],
                     appCode: provider.appCode,
                     signal: abortController.signal,
                 });
@@ -751,6 +887,67 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
             }
             res.json({ ok: true, abortedAll: true });
         }
+    });
+
+    // 图像解析（生成 Caption）
+    router.post('/prompt/analyze-images', async (req, res) => {
+        const { images, providerName, modelId } = req.body as {
+            images: string[];
+            providerName: string;
+            modelId: string;
+        };
+
+        if (!images || !Array.isArray(images) || images.length === 0) {
+            res.status(400).json({ error: '缺少 images 参数' });
+            return;
+        }
+        if (!providerName || !modelId) {
+            res.status(400).json({ error: '缺少 providerName 或 modelId' });
+            return;
+        }
+
+        // 查找提供商配置
+        const settings = getTextSettings();
+        const provider = settings.providers.find(p => p.name === providerName);
+        if (!provider) {
+            res.status(400).json({ error: `文本提供商 "${providerName}" 未配置` });
+            return;
+        }
+        let apiKey = provider.apiKey || '';
+        if (provider.apiKeySource.startsWith('video:')) {
+            const videoProviderName = provider.apiKeySource.slice(6);
+            apiKey = resolveVideoApiKey(videoProviderName);
+        }
+        if (!apiKey) {
+            res.status(400).json({ error: `提供商 "${providerName}" 未配置 API Key` });
+            return;
+        }
+
+        // 逐张图片调用解析模型
+        const captions: string[] = [];
+        for (const imgUrl of images) {
+            try {
+                // 将本地 /uploads/ 路径转为 base64，外部 URL 原样保留
+                const resolvedUrl = resolveImageUrl(imgUrl) || imgUrl;
+                const contentParts: ContentPart[] = [
+                    { type: 'text', text: DEFAULT_CAPTION_INSTRUCTION },
+                    { type: 'image_url', image_url: { url: resolvedUrl } },
+                ];
+                const result = await callLLM({
+                    baseUrl: provider.baseUrl,
+                    apiKey,
+                    model: modelId,
+                    messages: [{ role: 'user', content: contentParts }],
+                    appCode: provider.appCode,
+                });
+                captions.push(result.content || '[未获取到描述]');
+            } catch (err) {
+                logger.warn(`图像解析失败 (${imgUrl}): ${(err as Error).message}`);
+                captions.push('[图片无法解析]');
+            }
+        }
+
+        res.json({ captions });
     });
 
     // ── Prompt 管理接口 ──────────────────────────

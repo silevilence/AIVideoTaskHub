@@ -8,6 +8,12 @@ import { insertTask, updateTaskStatus } from '../src/server/task-model.js';
 import { ProviderRegistry } from '../src/server/provider-registry.js';
 import { createTaskRouter } from '../src/server/task-router.js';
 import type { VideoProvider } from '../src/server/provider.js';
+import {
+    updateTextSettings,
+    getDefaultVisionModel,
+    setDefaultVisionModel,
+} from '../src/server/text-settings.js';
+import type { TextProviderConfig } from '../src/server/text-settings.js';
 
 function createMockProvider(name = 'mock', models = ['model-a']): VideoProvider {
     return {
@@ -397,6 +403,111 @@ describe('任务路由 API', () => {
                 .put('/api/settings/nonexistent')
                 .send({ api_key: 'test' });
             expect(res.status).toBe(404);
+        });
+    });
+
+    // ── 图像解析与双轨路由 ──────────────────────────
+
+    describe('POST /api/prompt/analyze-images', () => {
+        it('缺少 images 参数时返回 400', async () => {
+            const res = await request(app)
+                .post('/api/prompt/analyze-images')
+                .send({ providerName: 'test', modelId: 'm1' });
+            expect(res.status).toBe(400);
+            expect(res.body.error).toContain('images');
+        });
+
+        it('images 为空数组时返回 400', async () => {
+            const res = await request(app)
+                .post('/api/prompt/analyze-images')
+                .send({ images: [], providerName: 'test', modelId: 'm1' });
+            expect(res.status).toBe(400);
+        });
+
+        it('缺少 providerName 或 modelId 时返回 400', async () => {
+            const res = await request(app)
+                .post('/api/prompt/analyze-images')
+                .send({ images: ['https://example.com/a.jpg'] });
+            expect(res.status).toBe(400);
+        });
+    });
+
+    describe('POST /api/prompt/optimize (图片支持)', () => {
+        it('无 images 参数时不触发图片路由（回归）', async () => {
+            const res = await request(app)
+                .post('/api/prompt/optimize')
+                .send({
+                    input: '一只猫',
+                    providerName: 'test-text',
+                    modelId: 'm1',
+                });
+            // 无文本提供商配置时返回 400，不是 500（说明未被图片路由干扰）
+            expect(res.status).toBe(400);
+        });
+
+        it('目标模型无 vision 且无解析模型时返回错误', async () => {
+            // 配置一个 vision=false 的文本提供商
+            const providers: TextProviderConfig[] = [{
+                name: 'test-text',
+                displayName: 'Test',
+                baseUrl: 'https://test.com',
+                apiKey: 'key',
+                apiKeySource: 'own',
+                models: [{ id: 'm1', displayName: 'M1', reasoning: false, vision: false }],
+                isPreset: false,
+                type: 'openai',
+            }];
+            updateTextSettings({ providers });
+            setDefaultVisionModel('', '');
+
+            const res = await request(app)
+                .post('/api/prompt/optimize')
+                .send({
+                    input: '一只猫',
+                    providerName: 'test-text',
+                    modelId: 'm1',
+                    images: ['https://example.com/a.jpg'],
+                });
+            expect(res.status).toBe(400);
+            expect(res.body.code).toBe('NO_ANALYSIS_MODEL');
+        });
+
+        it('目标模型无 vision 但有解析模型时提示需要解析', async () => {
+            const providers: TextProviderConfig[] = [{
+                name: 'test-text',
+                displayName: 'Test',
+                baseUrl: 'https://test.com',
+                apiKey: 'key',
+                apiKeySource: 'own',
+                models: [{ id: 'm1', displayName: 'M1', reasoning: false, vision: false }],
+                isPreset: false,
+                type: 'openai',
+            }];
+            updateTextSettings({ providers });
+            setDefaultVisionModel('test-text', 'm1');
+
+            const res = await request(app)
+                .post('/api/prompt/optimize')
+                .send({
+                    input: '一只猫',
+                    providerName: 'test-text',
+                    modelId: 'm1',
+                    images: ['https://example.com/a.jpg'],
+                });
+            expect(res.status).toBe(400);
+            expect(res.body.code).toBe('ANALYSIS_REQUIRED');
+        });
+    });
+
+    // ── 默认图像解析模型 API ──────────────────────────
+
+    describe('默认图像解析模型 API', () => {
+        it('GET /api/text-settings/default-vision-model 返回 200', async () => {
+            const res = await request(app)
+                .get('/api/text-settings/default-vision-model');
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveProperty('providerName');
+            expect(res.body).toHaveProperty('modelId');
         });
     });
 });

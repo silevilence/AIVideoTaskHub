@@ -5,11 +5,18 @@
 
 import { logger } from './logger.js';
 
+/** Vision 消息内容块类型 */
+export interface ContentPart {
+    type: 'text' | 'image_url';
+    text?: string;
+    image_url?: { url: string };
+}
+
 export interface LLMRequestOptions {
     baseUrl: string;
     apiKey: string;
     model: string;
-    messages: { role: string; content: string }[];
+    messages: { role: string; content: string | ContentPart[] }[];
     stream?: boolean;
     appCode?: string;
     signal?: AbortSignal;

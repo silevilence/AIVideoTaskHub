@@ -10,6 +10,8 @@ export interface TextModel {
     id: string;
     displayName: string;
     reasoning: boolean;
+    /** 是否原生支持多模态图像输入（Vision） */
+    vision: boolean;
 }
 
 export type TextProviderType = 'openai' | 'ollama';
@@ -220,3 +222,27 @@ export function validatePromptTemplate(template: string): { valid: boolean; warn
 
     return { valid: true, warnings };
 }
+
+// ── 默认图像解析模型 ──────────────────────────
+
+const KEY_DEFAULT_VISION_PROVIDER = 'text:default_vision_provider';
+const KEY_DEFAULT_VISION_MODEL = 'text:default_vision_model';
+
+/** 获取系统默认图像解析模型配置 */
+export function getDefaultVisionModel(): { providerName: string; modelId: string } | null {
+    const provider = getSetting(KEY_DEFAULT_VISION_PROVIDER);
+    const model = getSetting(KEY_DEFAULT_VISION_MODEL);
+    if (provider && model) {
+        return { providerName: provider, modelId: model };
+    }
+    return null;
+}
+
+/** 设置系统默认图像解析模型配置 */
+export function setDefaultVisionModel(providerName: string, modelId: string): void {
+    setSetting(KEY_DEFAULT_VISION_PROVIDER, providerName);
+    setSetting(KEY_DEFAULT_VISION_MODEL, modelId);
+}
+
+/** 图像解析模型调用的内置 Caption 指令 */
+export const DEFAULT_CAPTION_INSTRUCTION = '请用中文简要描述这张图片的画面内容，包括主体、场景、光线和氛围，不超过100字。';

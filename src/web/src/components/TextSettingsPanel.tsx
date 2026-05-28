@@ -3,6 +3,8 @@ import {
     fetchTextSettings,
     updateTextSettings,
     fetchRemoteModels,
+    fetchDefaultVisionModel,
+    updateDefaultVisionModel,
 } from '../api';
 import type {
     TextSettings,
@@ -43,6 +45,7 @@ export function TextSettingsPanel() {
     const [fetchingModels, setFetchingModels] = useState<Record<string, boolean>>({});
     const [remoteModels, setRemoteModels] = useState<Record<string, { id: string; owned_by?: string }[]>>({});
     const [modelSearchQuery, setModelSearchQuery] = useState<Record<string, string>>({});
+    const [defaultVisionModel, setDefaultVisionModel] = useState<{ providerName: string; modelId: string } | null>(null);
 
     // 视频提供商名称到 API Key 来源映射
     const VIDEO_PROVIDER_LABELS: Record<string, string> = {
@@ -62,6 +65,8 @@ export function TextSettingsPanel() {
             setMessage('获取设置失败');
             setMessageType('error');
         }
+        // 加载默认图像解析模型
+        fetchDefaultVisionModel().then(setDefaultVisionModel).catch(() => {});
     }, []);
 
     useEffect(() => {
@@ -385,6 +390,16 @@ export function TextSettingsPanel() {
                                                         />
                                                         推理
                                                     </label>
+                                                    {provider.type === 'openai' && (
+                                                        <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={model.vision || false}
+                                                                onChange={e => updateModel(provider.name, model.id, { vision: e.target.checked })}
+                                                            />
+                                                            Vision
+                                                        </label>
+                                                    )}
                                                     <button
                                                         onClick={() => removeModel(provider.name, model.id)}
                                                         className="text-destructive hover:text-destructive/80 cursor-pointer"
@@ -464,6 +479,39 @@ export function TextSettingsPanel() {
                             可在「创建任务」页面使用 AI 优化时选择。
                         </p>
                     </div>
+
+                    <div className="space-y-1">
+                        <Label className="text-xs">默认图像解析模型</Label>
+                        <select
+                            className="w-full max-w-xs h-9 rounded-md border border-input bg-background px-3 text-sm"
+                            value={defaultVisionModel ? `${defaultVisionModel.providerName}:${defaultVisionModel.modelId}` : ''}
+                            onChange={async (e) => {
+                                const val = e.target.value;
+                                if (!val) {
+                                    await updateDefaultVisionModel('', '');
+                                    setDefaultVisionModel(null);
+                                } else {
+                                    const colonIdx = val.indexOf(':');
+                                    const providerName = colonIdx >= 0 ? val.slice(0, colonIdx) : '';
+                                    const modelId = colonIdx >= 0 ? val.slice(colonIdx + 1) : '';
+                                    await updateDefaultVisionModel(providerName, modelId);
+                                    setDefaultVisionModel({ providerName, modelId });
+                                }
+                            }}
+                        >
+                            <option value="">未设置（将触发警告）</option>
+                            {editProviders.flatMap(p =>
+                                p.models.filter(m => m.vision).map(m => (
+                                    <option key={`${p.name}:${m.id}`} value={`${p.name}:${m.id}`}>
+                                        {p.displayName} / {m.displayName || m.id}
+                                    </option>
+                                ))
+                            )}
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                            当目标优化模型不支持视觉时，将使用此模型解析参考图片
+                        </p>
+                    </div>
                 </CardContent>
             </Card>
 
@@ -533,6 +581,7 @@ function RemoteModelPicker({ models, selectedModels, searchQuery, onSearchChange
                                 id: m.id,
                                 displayName: m.id,
                                 reasoning: false,
+                                vision: false,
                             })}
                         >
                             <span className="font-mono">{m.id}</span>
@@ -560,6 +609,7 @@ function ManualModelAdd({ onAdd }: { onAdd: (model: TextModel) => void }) {
             id: modelId.trim(),
             displayName: displayName.trim() || modelId.trim(),
             reasoning: false,
+            vision: false,
         });
         setModelId('');
         setDisplayName('');

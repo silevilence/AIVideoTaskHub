@@ -6,8 +6,10 @@ import {
     abortPromptOptimize,
     fetchPrompts,
     fetchDefaultPromptId,
+    analyzeImages,
+    fetchDefaultVisionModel,
 } from '../api';
-import type { TextProviderConfig, TextModel, Prompt } from '../api';
+import type { TextProviderConfig, TextModel, Prompt, ImageInfo } from '../api';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { ConfirmDialog } from './ui/dialog';
@@ -21,6 +23,8 @@ import {
     Loader2,
     AlertTriangle,
     BookOpen,
+    Image as ImageIcon,
+    RefreshCw,
 } from 'lucide-react';
 
 interface PromptOptimizerProps {
@@ -28,11 +32,12 @@ interface PromptOptimizerProps {
     onClose: (adoptedInput?: string) => void;
     initialPrompt: string;
     onAdoptResult: (result: string) => void;
+    initialImages?: ImageInfo[];
 }
 
 type GenerateState = 'idle' | 'generating' | 'done' | 'error';
 
-export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }: PromptOptimizerProps) {
+export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult, initialImages: propsInitialImages }: PromptOptimizerProps) {
     const [input, setInput] = useState(initialPrompt);
     const [result, setResult] = useState('');
     const [generateState, setGenerateState] = useState<GenerateState>('idle');
@@ -53,6 +58,15 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
     const dropdownRef = useRef<HTMLDivElement>(null);
     const promptDropdownRef = useRef<HTMLDivElement>(null);
 
+    // 图像支持状态
+    const initialImages = propsInitialImages || [];
+    const [captions, setCaptions] = useState<string[]>([]);
+    const [analysisProvider, setAnalysisProvider] = useState('');
+    const [analysisModel, setAnalysisModel] = useState('');
+    const [analysisPhase, setAnalysisPhase] = useState<'idle' | 'analyzing' | 'done' | 'error'>('idle');
+    const [analysisError, setAnalysisError] = useState('');
+    const [forceTextOnlyDialog, setForceTextOnlyDialog] = useState(false);
+
     // 加载文本设置
     useEffect(() => {
         if (!open) return;
@@ -62,6 +76,10 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
         setError('');
         inputChangedRef.current = false;
         initialInputRef.current = initialPrompt;
+        // 重置分析状态
+        setCaptions([]);
+        setAnalysisPhase('idle');
+        setAnalysisError('');
 
         fetchTextSettings().then(settings => {
             setProviders(settings.providers);
@@ -84,6 +102,14 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
                 setSelectedPromptId(defaultId);
             }
         }).catch(() => { /* 非致命 */ });
+
+        // 加载默认图像解析模型
+        fetchDefaultVisionModel().then(dvm => {
+            if (dvm) {
+                setAnalysisProvider(dvm.providerName);
+                setAnalysisModel(dvm.modelId);
+            }
+        }).catch(() => {});
     }, [open, initialPrompt]);
 
     // 关闭下拉菜单
@@ -112,19 +138,61 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
         }))
     );
 
-    const handleGenerate = useCallback(async () => {
-        if (!selectedProvider || !selectedModel || !input.trim()) return;
+    // 分析图片（策略 B 前置步骤）
+    const handleAnalyzeImages = useCallback(async () => {
+        if (!analysisProvider || !analysisModel || initialImages.length === 0) return;
 
+        setAnalysisPhase('analyzing');
+        setAnalysisError('');
+        setCaptions([]);
+
+        try {
+            const result = await analyzeImages({
+                images: initialImages.map(img => img.url),
+                providerName: analysisProvider,
+                modelId: analysisModel,
+            });
+            setCaptions(result.captions);
+            setAnalysisPhase('done');
+        } catch (err) {
+            setAnalysisError((err as Error).message);
+            setAnalysisPhase('error');
+        }
+    }, [analysisProvider, analysisModel, initialImages]);
+
+    // 核心优化逻辑（可复用）
+    const doOptimize = useCallback(async (forceTextOnly: boolean) => {
         setGenerateState('generating');
         setError('');
         setResult('');
 
+        const targetModel = currentModels.find(m => m.id === selectedModel);
+        const targetHasVision = targetModel?.vision === true;
+
+        // 策略 B：合并 Captions 到 input
+        let finalInput = input.trim();
+        if (initialImages.length > 0 && !targetHasVision && captions.length > 0 && !forceTextOnly) {
+            const captionLines = initialImages
+                .map((img, i) => `${img.label}：${captions[i] || ''}`)
+                .filter(line => {
+                    const parts = line.split('：');
+                    return parts.length >= 2 && parts[1].length > 0;
+                });
+            if (captionLines.length > 0) {
+                finalInput = finalInput + '\n\n---\n' + captionLines.join('\n');
+            }
+        }
+
+        const useImages = initialImages.length > 0 && targetHasVision && !forceTextOnly;
+
         const optimizeParams = {
-            input: input.trim(),
+            input: finalInput,
             providerName: selectedProvider,
             modelId: selectedModel,
             language: promptLanguage,
             promptId: selectedPromptId,
+            ...(useImages ? { images: initialImages.map(img => img.url) } : {}),
+            ...(forceTextOnly && initialImages.length > 0 ? { forceTextOnly: true, images: initialImages.map(img => img.url) } : {}),
         };
 
         try {
@@ -145,10 +213,41 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
                 setGenerateState('done');
             }
         } catch (err) {
-            setError((err as Error).message);
+            // 检查是否需要解析图片
+            const errMsg = (err as Error).message;
+            if (errMsg.includes('ANALYSIS_REQUIRED') || errMsg.includes('请先调用')) {
+                // 触发图片解析
+                await handleAnalyzeImages();
+                return;
+            }
+            setError(errMsg);
             setGenerateState('error');
         }
-    }, [selectedProvider, selectedModel, input, streaming, selectedPromptId, promptLanguage]);
+    }, [selectedProvider, selectedModel, input, streaming, selectedPromptId, promptLanguage,
+        initialImages, captions, currentModels, handleAnalyzeImages]);
+
+    const handleGenerate = useCallback(async () => {
+        if (!selectedProvider || !selectedModel || !input.trim()) return;
+
+        const targetModel = currentModels.find(m => m.id === selectedModel);
+        const targetHasVision = targetModel?.vision === true;
+
+        // 策略 B：需要先解析图片
+        if (initialImages.length > 0 && !targetHasVision && analysisPhase !== 'done') {
+            // 检查是否有解析模型
+            if (!analysisProvider || !analysisModel) {
+                setForceTextOnlyDialog(true);
+                return;
+            }
+            // 先解析
+            await handleAnalyzeImages();
+            return;
+        }
+
+        await doOptimize(false);
+    }, [selectedProvider, selectedModel, input, currentModels,
+        initialImages, analysisPhase, analysisProvider, analysisModel,
+        handleAnalyzeImages, doOptimize]);
 
     const handleAbort = () => {
         abortRef.current?.abort();
@@ -325,6 +424,71 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
                             </div>
                         )}
 
+                        {/* 参考图预览 */}
+                        {initialImages.length > 0 && (
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                                    <ImageIcon className="h-3 w-3" />
+                                    参考图像（{initialImages.length} 张）
+                                </label>
+                                <div className="flex gap-2 overflow-x-auto pb-1">
+                                    {initialImages.map((img, i) => (
+                                        <div key={i} className="relative shrink-0">
+                                            <img
+                                                src={img.url}
+                                                alt={img.label}
+                                                className="h-20 w-20 object-cover rounded-md border"
+                                            />
+                                            <span className="absolute bottom-0 left-0 right-0 text-[10px] text-center bg-black/60 text-white rounded-b-md py-0.5 truncate">
+                                                {img.label}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 图像解析模型选择器（策略 B） */}
+                        {initialImages.length > 0 && currentModels.find(m => m.id === selectedModel)?.vision === false && (
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-muted-foreground">
+                                    图像解析模型
+                                </label>
+                                <div className="flex items-center gap-2">
+                                    <select
+                                        className={`h-8 flex-1 rounded-md border text-xs px-2 bg-background ${!analysisProvider || !analysisModel ? 'border-destructive' : 'border-input'}`}
+                                        value={`${analysisProvider}:${analysisModel}`}
+                                        onChange={e => {
+                                            const val = e.target.value;
+                                            const colonIdx = val.indexOf(':');
+                                            const prov = colonIdx >= 0 ? val.slice(0, colonIdx) : '';
+                                            const mod = colonIdx >= 0 ? val.slice(colonIdx + 1) : '';
+                                            setAnalysisProvider(prov);
+                                            setAnalysisModel(mod);
+                                            setCaptions([]);
+                                            setAnalysisPhase('idle');
+                                        }}
+                                    >
+                                        <option value=":">未选择</option>
+                                        {providers.flatMap(p =>
+                                            p.models.filter(m => m.vision).map(m => (
+                                                <option key={`${p.name}:${m.id}`} value={`${p.name}:${m.id}`}>
+                                                    {p.displayName} / {m.displayName || m.id}
+                                                </option>
+                                            ))
+                                        )}
+                                    </select>
+                                </div>
+                                {(!analysisProvider || !analysisModel) ? (
+                                    <p className="text-[10px] text-destructive">目标模型不支持视觉，请选择图像解析模型</p>
+                                ) : (
+                                    <p className="text-[10px] text-muted-foreground">
+                                        将先用此模型解析图片，生成描述后再优化
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
                         {/* 输入区 */}
                         <div className="space-y-1.5">
                             <label className="text-xs font-medium text-muted-foreground">原始提示词（输入）</label>
@@ -350,6 +514,52 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
                             />
                             <span className="text-xs text-muted-foreground">替换模板中的 {'${lang}'} 占位符</span>
                         </div>
+
+                        {/* Caption 编辑区 */}
+                        {analysisPhase === 'done' && captions.length > 0 && (
+                            <div className="space-y-2 p-3 border rounded-md bg-accent/20">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-xs font-medium">图像解析结果（可编辑）</label>
+                                    <button
+                                        onClick={handleAnalyzeImages}
+                                        className="flex items-center gap-1 text-xs text-primary hover:underline cursor-pointer"
+                                    >
+                                        <RefreshCw className="h-3 w-3" />
+                                        重新解析
+                                    </button>
+                                </div>
+                                {initialImages.map((img, i) => (
+                                    <div key={i} className="space-y-1">
+                                        <span className="text-[10px] text-muted-foreground">{img.label}</span>
+                                        <Textarea
+                                            value={captions[i] || ''}
+                                            onChange={e => {
+                                                const next = [...captions];
+                                                next[i] = e.target.value;
+                                                setCaptions(next);
+                                            }}
+                                            className="min-h-12 text-xs"
+                                            placeholder="编辑描述..."
+                                        />
+                                    </div>
+                                ))}
+                                <div className="text-[10px] text-muted-foreground">
+                                    合并预览：{initialImages.map((img, i) => `${img.label}：${captions[i] || '(空)'}`).join('；')}
+                                </div>
+                            </div>
+                        )}
+                        {analysisPhase === 'analyzing' && (
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground p-3">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                正在解析图片...
+                            </div>
+                        )}
+                        {analysisError && (
+                            <p className="text-xs text-destructive flex items-center gap-1">
+                                <AlertTriangle className="h-3 w-3" />
+                                {analysisError}
+                            </p>
+                        )}
 
                         {/* 结果区 */}
                         <div className="space-y-1.5">
@@ -389,7 +599,10 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
                                 <Button
                                     size="sm"
                                     onClick={handleGenerate}
-                                    disabled={!selectedProvider || !selectedModel || !input.trim() || allModelOptions.length === 0}
+                                    disabled={!selectedProvider || !selectedModel || !input.trim() || allModelOptions.length === 0 ||
+                                        (initialImages.length > 0 &&
+                                         currentModels.find(m => m.id === selectedModel)?.vision === false &&
+                                         analysisPhase === 'analyzing')}
                                 >
                                     {generateState === 'done' || generateState === 'error' ? (
                                         <RotateCcw className="h-3 w-3 mr-1" />
@@ -427,6 +640,20 @@ export function PromptOptimizer({ open, onClose, initialPrompt, onAdoptResult }:
                 cancelText="放弃修改"
                 onConfirm={handleConfirmCloseWithInput}
                 onCancel={handleConfirmCloseDiscard}
+            />
+
+            {/* 强制纯文本确认弹窗 */}
+            <ConfirmDialog
+                open={forceTextOnlyDialog}
+                title="缺少图像解析模型"
+                description="目标模型不支持直接分析图片，且未配置图像解析模型。「强制继续」将以纯文本模式优化（图片信息将被忽略）。"
+                confirmText="强制继续"
+                cancelText="取消"
+                onConfirm={() => {
+                    setForceTextOnlyDialog(false);
+                    doOptimize(true);
+                }}
+                onCancel={() => setForceTextOnlyDialog(false)}
             />
         </>
     );

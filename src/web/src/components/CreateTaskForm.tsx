@@ -1178,6 +1178,15 @@ export function CreateTaskForm({
             <PromptOptimizer
                 open={promptOptimizerOpen}
                 initialPrompt={prompt}
+                initialImages={(() => {
+                    const imgs: import('../api').ImageInfo[] = [];
+                    if (imageUrl) imgs.push({ url: imageUrl, label: '首帧图' });
+                    if (volcLastFrameUrl) imgs.push({ url: volcLastFrameUrl, label: '尾帧图' });
+                    volcRefImages.forEach((img, i) => {
+                        imgs.push({ url: img.url, label: `参考图${i + 1}` });
+                    });
+                    return imgs;
+                })()}
                 onClose={(adoptedInput) => {
                     setPromptOptimizerOpen(false);
                     if (adoptedInput !== undefined) {
