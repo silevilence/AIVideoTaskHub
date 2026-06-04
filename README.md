@@ -70,12 +70,6 @@ AI Video Task Hub 是一个面向个人使用场景的轻量级 AI 视频生成�
 - 平台与应用图标已内置
 - 支持图片悬停预览、视频预览和常用操作弹窗
 
-### MCP 服务（模型上下文协议）
-
-- 内置 MCP 服务端，支持外部 AI 客户端（Cherry Studio、Claude Desktop 等）通过标准协议连接
-- 提供六个工具：模型查询、参数规范查询、任务提交、任务大盘、任务详情、视频资产提取
-- MCP 服务默认随系统自启动，可在设置页一键启停
-
 ### 日志与持久化
 
 - 使用 SQLite 保存任务和设置
@@ -218,8 +212,10 @@ npm run start
 | GET | /api/text-settings | 获取文本平台与提示词设置 |
 | PUT | /api/text-settings | 更新文本平台与提示词设置 |
 | GET | /api/text-settings/model-languages | 获取特定模型语言覆盖 |
-| PUT | /api/text-settings/model-languages | 更新特定模型语言覆盖 || GET | `/api/text-settings/default-vision-model` | 获取默认图像解析模型配置 |
-| PUT | `/api/text-settings/default-vision-model` | 设置默认图像解析模型配置 || POST | /api/text-settings/fetch-models | 从兼容服务端获取可用文本模型 |
+| PUT | /api/text-settings/model-languages | 更新特定模型语言覆盖 |
+| GET | /api/text-settings/default-vision-model | 获取默认图像解析模型配置 |
+| PUT | /api/text-settings/default-vision-model | 设置默认图像解析模型配置 |
+| POST | /api/text-settings/fetch-models | 从兼容服务端获取可用文本模型 |
 | POST | `/api/prompt/optimize` | 提交提示词优化，可选流式输出、参考图和 promptId |
 | POST | `/api/prompt/optimize/abort` | 取消进行中的提示词优化请求 |
 | POST | `/api/prompt/analyze-images` | 使用视觉模型分析参考图并生成描述文本 |

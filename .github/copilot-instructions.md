@@ -3,8 +3,8 @@
 ## 📌 项目基本信息
 - **项目定位**：个人家用的 AI 视频生成 API 聚合与异步任务管理系统。
 - **架构模式**：前后端一体化（Monolithic），Node.js 负责 API、静态资源托管与后台轮询，单 Docker 镜像部署。
-- **当前代码版本**：1.4.1（以 package.json 为准）
-- **最近变更记录**：最新 Change Log 条目为 V1.4.2
+- **当前代码版本**：1.4.3（以 package.json 为准）
+- **最近变更记录**：最新 Change Log 条目为 V1.4.3
 - **已接入平台**：SiliconFlow（硅基流动）、火山引擎 Seedance、AIHubMix。
 
 ## 🛠️ 技术栈与依赖包
@@ -23,7 +23,7 @@
 │   │   ├── app.ts                   # Express 应用配置（静态资源、API、SPA 回退）
 │   │   ├── index.ts                 # 服务入口（初始化数据库、Provider、轮询器）
 │   │   ├── database.ts              # SQLite 初始化与轻量迁移
-│   │   ├── image-utils.ts           # 创建任务时解析本地上传图片
+│   │   ├── image-utils.ts           # 图片 URL 规范化（将本地 /uploads/ 路径转为 base64）
 │   │   ├── logger.ts                # 控制台 + 文件日志
 │   │   ├── llm-client.ts            # LLM 客户端（支持 ContentPart[] 多模态 Vision 消息）
 │   │   ├── prompt-model.ts          # 提示词库与目录的数据访问层
