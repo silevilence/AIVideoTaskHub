@@ -1,15 +1,27 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/server/app.js';
 import { initDb } from '../src/server/database.js';
 import { ProviderRegistry } from '../src/server/provider-registry.js';
 import { MockProvider } from '../src/server/providers/mock-provider.js';
+import fs from 'fs';
+import path from 'path';
 import {
     saveTextProviders,
     savePromptTemplate,
     getTextSettings,
     type TextProviderConfig,
 } from '../src/server/text-settings.js';
+
+// Mock LLM 客户端，捕获实际调用参数验证图片路径解析
+const mockCallLLM = vi.hoisted(() =>
+    vi.fn().mockResolvedValue({ content: '优化结果', finishReason: 'stop' })
+);
+vi.mock('../src/server/llm-client.js', () => ({
+    callLLM: mockCallLLM,
+    callLLMStream: vi.fn(),
+    fetchLLMModels: vi.fn().mockResolvedValue([]),
+}));
 
 describe('text-settings API routes', () => {
     let app: ReturnType<typeof createApp>;
@@ -167,6 +179,84 @@ describe('text-settings API routes', () => {
                 .send({ input: '一只猫', providerName: 'nonexistent', modelId: 'model' });
             expect(res.status).toBe(400);
             expect(res.body.error).toContain('未配置');
+        });
+
+        it('策略 A：/uploads/ 路径自动转为 base64 再发送给 LLM', async () => {
+            // 准备测试图片
+            const testDir = path.resolve(process.env.DATA_DIR || 'data', 'uploads');
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, 'test-optimize-resolve.png');
+            const pngData = Buffer.from(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNl7BcQAAAABJRU5ErkJggg==',
+                'base64',
+            );
+            fs.writeFileSync(testFile, pngData);
+
+            // 配置 vision=true 的文本提供商
+            const providers: TextProviderConfig[] = [{
+                name: 'test-vision',
+                displayName: 'TestVision',
+                baseUrl: 'https://api.test.com',
+                apiKey: 'sk-test',
+                apiKeySource: 'own',
+                models: [{ id: 'vision-model', displayName: 'Vision', reasoning: false, vision: true }],
+                isPreset: false,
+                type: 'openai',
+            }];
+            saveTextProviders(providers);
+
+            try {
+                mockCallLLM.mockClear();
+                const res = await request(app)
+                    .post('/api/prompt/optimize')
+                    .send({
+                        input: '一只猫',
+                        providerName: 'test-vision',
+                        modelId: 'vision-model',
+                        images: ['/uploads/test-optimize-resolve.png', 'https://example.com/ref.jpg'],
+                    });
+
+                expect(res.status).toBe(200);
+                // callLLM 应被调用，且第2个 contentPart 的图片 URL 已转为 base64
+                const callArgs = mockCallLLM.mock.calls[0][0];
+                const contentParts = callArgs.messages[0].content;
+                expect(contentParts[1].type).toBe('image_url');
+                expect(contentParts[1].image_url.url).toMatch(/^data:image\/png;base64,/);
+                // 第3个 contentPart（外部 URL）保持不变
+                expect(contentParts[2].image_url.url).toBe('https://example.com/ref.jpg');
+            } finally {
+                if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+            }
+        });
+
+        it('策略 A：纯外部 URL 和 base64 图片不受影响', async () => {
+            const providers: TextProviderConfig[] = [{
+                name: 'test-vision',
+                displayName: 'TestVision',
+                baseUrl: 'https://api.test.com',
+                apiKey: 'sk-test',
+                apiKeySource: 'own',
+                models: [{ id: 'vision-model', displayName: 'Vision', reasoning: false, vision: true }],
+                isPreset: false,
+                type: 'openai',
+            }];
+            saveTextProviders(providers);
+
+            mockCallLLM.mockClear();
+            const res = await request(app)
+                .post('/api/prompt/optimize')
+                .send({
+                    input: '一只猫',
+                    providerName: 'test-vision',
+                    modelId: 'vision-model',
+                    images: ['https://example.com/ref.jpg', 'data:image/png;base64,aGVsbG8='],
+                });
+
+            expect(res.status).toBe(200);
+            const callArgs = mockCallLLM.mock.calls[0][0];
+            const contentParts = callArgs.messages[0].content;
+            expect(contentParts[1].image_url.url).toBe('https://example.com/ref.jpg');
+            expect(contentParts[2].image_url.url).toBe('data:image/png;base64,aGVsbG8=');
         });
 
         it('提供商无 API Key 返回 400', async () => {

@@ -1776,18 +1776,16 @@ function UploadedImagesModal({
                         </div>
                     ) : (
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                            {images.map((image) => (
+                            {validImages.map((image) => (
                                 <button
                                     key={image.url}
                                     onClick={() => onSelect(image)}
-                                    className={cn(
-                                        "group relative aspect-square rounded-lg overflow-hidden border border-border hover:border-primary transition-colors",
-                                        failedImages.has(image.url) && "hidden"
-                                    )}
+                                    className="group relative aspect-square rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
                                 >
                                     <img
                                         src={image.url}
                                         alt={image.filename}
+                                        loading="lazy"
                                         className="w-full h-full object-cover"
                                         onError={() => handleImageError(image.url)}
                                     />

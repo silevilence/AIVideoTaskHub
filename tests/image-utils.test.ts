@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { resolveImageUrl, resolveCreateTaskImages } from '../src/server/image-utils.js';
+import { resolveImageUrl, resolveCreateTaskImages, resolveImageUrls } from '../src/server/image-utils.js';
 
 const testDir = path.resolve(process.env.DATA_DIR || 'data', 'uploads');
 const testFile = path.join(testDir, 'test-image-utils.png');
@@ -64,6 +64,17 @@ describe('resolveCreateTaskImages', () => {
         expect((resolvedExtra!.referenceImageUrls as string[])[0]).toMatch(/^data:image\/png;base64,/);
         expect((resolvedExtra!.referenceImageUrls as string[])[1]).toBe('https://example.com/ref.png');
         expect(resolvedExtra!.someOtherParam).toBe('unchanged');
+    });
+
+    it('混合来源数组正确转换', () => {
+        const result = resolveImageUrls([
+            '/uploads/test-image-utils.png',
+            'https://example.com/img.png',
+            'data:image/png;base64,aGVsbG8=',
+        ]);
+        expect(result[0]).toMatch(/^data:image\/png;base64,/);
+        expect(result[1]).toBe('https://example.com/img.png');
+        expect(result[2]).toBe('data:image/png;base64,aGVsbG8=');
     });
 
     it('extra 为 undefined 时正常返回', () => {

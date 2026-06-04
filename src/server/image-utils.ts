@@ -19,6 +19,14 @@ export function resolveImageUrl(url: string | undefined | null): string | undefi
 }
 
 /**
+ * 将一组图片 URL 中的本地路径统一转换为 base64 data URL，
+ * 外部 URL 和已有 base64 字符串原样保留。
+ */
+export function resolveImageUrls(urls: string[]): string[] {
+    return urls.map(u => resolveImageUrl(u) ?? u);
+}
+
+/**
  * 解析 createTask 参数中所有可能包含本地路径的图片字段，
  * 将 /uploads/ 路径转换为 base64。
  */

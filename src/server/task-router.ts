@@ -38,7 +38,7 @@ import {
     type TextSettings,
 } from './text-settings.js';
 import { callLLM, callLLMStream, fetchLLMModels, type ContentPart } from './llm-client.js';
-import { resolveCreateTaskImages, resolveImageUrl } from './image-utils.js';
+import { resolveCreateTaskImages, resolveImageUrl, resolveImageUrls } from './image-utils.js';
 import {
     getAllPrompts,
     getPromptById,
@@ -695,10 +695,12 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
 
             if (targetHasVision) {
                 // 策略 A：Vision 直通 —— 构建多模态消息
+                // 先将本地 /uploads/ 路径统一转为 base64，确保外部 API 可访问
+                const resolvedImages = resolveImageUrls(images);
                 const contentParts: ContentPart[] = [
                     { type: 'text', text: systemPrompt },
                 ];
-                for (const imgUrl of images) {
+                for (const imgUrl of resolvedImages) {
                     contentParts.push({ type: 'image_url', image_url: { url: imgUrl } });
                 }
 
