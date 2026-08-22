@@ -1,4 +1,12 @@
-import type { ModelParameterDefinition, ModelParameterSchema } from '../api';
+import { useRef, useState } from 'react';
+import {
+    fetchUploadedImages,
+    uploadImage,
+    type ModelParameterDefinition,
+    type ModelParameterSchema,
+    type UploadedImage,
+} from '../api';
+import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
@@ -97,6 +105,122 @@ function numericValue(variable: ModelParameterDefinition, value: string): unknow
     return Number(value);
 }
 
+function ComfyImageInput({
+    id,
+    label,
+    value,
+    onChange,
+    error,
+}: {
+    id: string;
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+    error?: string;
+}) {
+    const fileRef = useRef<HTMLInputElement>(null);
+    const [uploading, setUploading] = useState(false);
+    const [libraryOpen, setLibraryOpen] = useState(false);
+    const [library, setLibrary] = useState<UploadedImage[]>([]);
+    const [actionError, setActionError] = useState('');
+
+    const handleFile = async (file: File | undefined) => {
+        if (!file) return;
+        setUploading(true);
+        setActionError('');
+        try {
+            const uploaded = await uploadImage(file);
+            onChange(uploaded.url);
+        } catch (uploadError) {
+            setActionError((uploadError as Error).message);
+        } finally {
+            setUploading(false);
+            if (fileRef.current) fileRef.current.value = '';
+        }
+    };
+
+    const toggleLibrary = async () => {
+        if (libraryOpen) {
+            setLibraryOpen(false);
+            return;
+        }
+        setActionError('');
+        try {
+            setLibrary(await fetchUploadedImages());
+            setLibraryOpen(true);
+        } catch (libraryError) {
+            setActionError((libraryError as Error).message);
+        }
+    };
+
+    return (
+        <div className="space-y-2">
+            <Input
+                id={id}
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? `${id}-error` : undefined}
+                type="text"
+                value={value}
+                placeholder="https://…、data:image/… 或 /uploads/…"
+                onChange={(event) => onChange(event.target.value)}
+            />
+            <div className="flex flex-wrap gap-2">
+                <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/gif,image/webp"
+                    aria-hidden="true"
+                    tabIndex={-1}
+                    data-testid={`comfy-image-file-${id}`}
+                    className="sr-only"
+                    onChange={(event) => void handleFile(event.target.files?.[0])}
+                />
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-label={`上传 ${label}`}
+                    disabled={uploading}
+                    onClick={() => fileRef.current?.click()}
+                >
+                    {uploading ? '上传中…' : '上传图片'}
+                </Button>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`打开 ${label} 图片库`}
+                    onClick={() => void toggleLibrary()}
+                >
+                    {libraryOpen ? '收起图片库' : '从图片库选择'}
+                </Button>
+            </div>
+            {libraryOpen && (
+                <div className="grid grid-cols-3 gap-2 rounded-lg border border-border bg-background p-2 sm:grid-cols-5">
+                    {library.length === 0 ? (
+                        <p className="col-span-full py-3 text-center text-xs text-muted-foreground">图片库为空</p>
+                    ) : library.map((image) => (
+                        <button
+                            key={image.url}
+                            type="button"
+                            aria-label={`选择图片 ${image.filename}`}
+                            title={image.filename}
+                            className="aspect-square overflow-hidden rounded-md border border-border hover:border-primary"
+                            onClick={() => {
+                                onChange(image.url);
+                                setLibraryOpen(false);
+                            }}
+                        >
+                            <img src={image.url} alt="" className="h-full w-full object-cover" />
+                        </button>
+                    ))}
+                </div>
+            )}
+            {actionError && <p role="alert" className="text-xs text-destructive">{actionError}</p>}
+        </div>
+    );
+}
+
 export function ComfyTaskFields({
     schema,
     values,
@@ -189,6 +313,14 @@ export function ComfyTaskFields({
                                         );
                                     })}
                                 </div>
+                            ) : variable.type === 'image' ? (
+                                <ComfyImageInput
+                                    id={id}
+                                    label={variable.label}
+                                    value={String(values[variable.key] ?? '')}
+                                    onChange={(value) => onChange(variable.key, value)}
+                                    error={error}
+                                />
                             ) : (
                                 <Input
                                     {...common}
@@ -198,7 +330,6 @@ export function ComfyTaskFields({
                                     max={variable.max}
                                     step={variable.step}
                                     value={String(values[variable.key] ?? '')}
-                                    placeholder={variable.type === 'image' ? 'https://…、data:image/… 或 /uploads/…' : undefined}
                                     onChange={(event) => onChange(
                                         variable.key,
                                         variable.type === 'integer' || variable.type === 'number'

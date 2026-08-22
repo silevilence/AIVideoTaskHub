@@ -3,9 +3,18 @@ import {
     getWorkflowTemplateById,
     type WorkflowTemplateRecord,
 } from '../comfy-workflow-model.js';
-import { normalizeComfyUiBaseUrl } from '../comfyui-connection.js';
+import {
+    checkComfyWorkflowCompatibility,
+    createSafeHttpTarget,
+    normalizeComfyUiBaseUrl,
+    type ComfyDnsResolver,
+} from '../comfyui-connection.js';
 import { parseWorkflowTemplateDocument } from '../comfy-workflow-template.js';
-import { renderWorkflowTemplate } from '../comfy-workflow-renderer.js';
+import {
+    renderWorkflowTemplate,
+    renderWorkflowWithValues,
+} from '../comfy-workflow-renderer.js';
+import { uploadComfyImage } from '../comfyui-images.js';
 import type {
     CreateTaskParams,
     CreateTaskResult,
@@ -31,10 +40,39 @@ function toModelInfo(record: WorkflowTemplateRecord): ModelInfo | undefined {
     };
 }
 
+export class ComfyTaskPreparationError extends Error {
+    constructor(public readonly errors: string[]) {
+        super(errors.join('\n'));
+        this.name = 'ComfyTaskPreparationError';
+    }
+}
+
+export interface ComfyUIProviderOptions {
+    fetcher?: typeof fetch;
+    resolver?: ComfyDnsResolver;
+    dataDir?: string;
+}
+
+function compatibilityErrors(result: Awaited<ReturnType<typeof checkComfyWorkflowCompatibility>>): string[] {
+    return [
+        ...result.missingNodeTypes.map((classType) => `缺少节点类型：${classType}`),
+        ...result.missingRequiredInputs.map(
+            (issue) => `节点 ${issue.nodeId}（${issue.classType}）缺少必填输入：${issue.input}`
+        ),
+        ...result.incompatibleInputs.map(
+            (issue) => issue.reason
+                ? `节点 ${issue.nodeId}（${issue.classType}）输入 ${issue.input} 不兼容：${issue.reason}`
+                : `节点 ${issue.nodeId}（${issue.classType}）包含不可识别输入：${issue.input}`
+        ),
+    ];
+}
+
 export class ComfyUIProvider implements VideoProvider {
     readonly name = 'comfyui';
     readonly displayName = 'ComfyUI';
     private baseUrl = '';
+
+    constructor(private readonly options: ComfyUIProviderOptions = {}) {}
 
     get models(): string[] {
         return this.getModelsInfo().map((model) => model.id);
@@ -78,7 +116,7 @@ export class ComfyUIProvider implements VideoProvider {
         return normalizeComfyUiBaseUrl(value);
     }
 
-    prepareTask(params: CreateTaskParams): CreateTaskParams {
+    async prepareTask(params: CreateTaskParams): Promise<CreateTaskParams> {
         if (!params.model) throw new Error('请选择 ComfyUI 工作流模板');
         const record = getWorkflowTemplateById(params.model);
         if (!record || !record.enabled) throw new Error('所选 ComfyUI 工作流模板不存在或已停用');
@@ -98,15 +136,68 @@ export class ComfyUIProvider implements VideoProvider {
             parsed.template,
             workflowInputs as Record<string, unknown>
         );
+        const baseUrl = this.resolveBaseUrl(temporaryBaseUrl as string | undefined);
+        let compatibility;
+        let safeTarget;
+        try {
+            safeTarget = await createSafeHttpTarget(
+                baseUrl,
+                this.options.resolver,
+                'ComfyUI 地址'
+            );
+            compatibility = await checkComfyWorkflowCompatibility(
+                baseUrl,
+                rendered.workflow,
+                this.options.fetcher,
+                this.options.resolver,
+                safeTarget
+            );
+        } catch (error) {
+            throw new ComfyTaskPreparationError([(error as Error).message]);
+        }
+        if (!compatibility.ok) {
+            throw new ComfyTaskPreparationError(compatibilityErrors(compatibility));
+        }
+
+        const resolvedEntries = Object.entries(rendered.values);
+        const imageResolutions = [];
+        for (const variable of parsed.template.metadata.variables) {
+            if (variable.type !== 'image') continue;
+            const source = rendered.values[variable.key] as string;
+            let resolution;
+            try {
+                resolution = await uploadComfyImage({
+                    baseUrl,
+                    source,
+                    variableKey: variable.key,
+                    fetcher: this.options.fetcher,
+                    resolver: this.options.resolver,
+                    dataDir: this.options.dataDir,
+                    safeTarget,
+                });
+            } catch (error) {
+                throw new ComfyTaskPreparationError([
+                    `图片变量 ${variable.key} 上传失败：${(error as Error).message}`,
+                ]);
+            }
+            const entry = resolvedEntries.find(([key]) => key === variable.key);
+            if (entry) entry[1] = resolution.fileIdentifier;
+            imageResolutions.push({ variableKey: variable.key, ...resolution });
+        }
+        const resolvedWorkflowInputs = Object.fromEntries(resolvedEntries);
         return {
             ...params,
             prompt: rendered.primaryDescription,
             extra: {
+                snapshotVersion: 1,
                 templateId: record.id,
                 templateName: record.name,
-                comfyuiBaseUrl: this.resolveBaseUrl(temporaryBaseUrl as string | undefined),
+                templateDocument: record.document,
+                comfyuiBaseUrl: baseUrl,
                 workflowInputs: rendered.values,
-                workflow: rendered.workflow,
+                resolvedWorkflowInputs,
+                imageResolutions,
+                workflow: renderWorkflowWithValues(parsed.template, resolvedWorkflowInputs),
                 primaryOutput: parsed.template.metadata.primaryOutput,
             },
         };

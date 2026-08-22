@@ -167,6 +167,28 @@ describe('回收站 Model 操作', () => {
     });
 
     describe('purgeTask', () => {
+        it('其他 ComfyUI 任务快照仍引用图片时不应删除共享图片', () => {
+            const imageUrl = '/uploads/shared-comfy.png';
+            const legacyTask = insertTask({ provider: 'mock', prompt: '旧任务', imageUrl });
+            insertTask({
+                provider: 'comfyui',
+                prompt: 'ComfyUI 任务',
+                extraParams: {
+                    snapshotVersion: 1,
+                    workflowInputs: { image: imageUrl },
+                    imageResolutions: [{ variableKey: 'image', source: imageUrl }],
+                },
+            });
+            deleteTask(legacyTask.id);
+            getDb().prepare("UPDATE tasks SET deleted_at = datetime('now', '-31 days') WHERE id = ?")
+                .run(legacyTask.id);
+
+            const result = purgeTask(legacyTask.id);
+
+            expect(result.success).toBe(true);
+            expect(result.filesToDelete).not.toContain(imageUrl);
+        });
+
         it('应彻底删除超过30天的任务', () => {
             const t1 = insertTask({ provider: 'mock', prompt: '任务1' });
             // 设置 deleted_at 为 31 天前

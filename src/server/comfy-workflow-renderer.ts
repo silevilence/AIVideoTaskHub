@@ -121,21 +121,28 @@ export function renderWorkflowTemplate(
     provided: Record<string, unknown>
 ): RenderedWorkflowTemplate {
     const values = validateInputs(template.metadata.variables, provided);
+    return {
+        workflow: renderWorkflowWithValues(template, values),
+        values,
+        primaryDescription: template.metadata.primaryDescription
+            ? String(values[template.metadata.primaryDescription])
+            : template.metadata.name,
+    };
+}
+
+export function renderWorkflowWithValues(
+    template: ParsedWorkflowTemplate,
+    values: Record<string, unknown>
+): ComfyApiWorkflow {
     const stringVariables = new Set(
         template.metadata.variables
             .filter((variable) => variable.type === 'string')
             .map((variable) => variable.key)
     );
-    const workflow = Object.fromEntries(
+    return Object.fromEntries(
         Object.entries(template.workflow).map(([nodeId, node]) => [nodeId, {
             class_type: node.class_type,
             inputs: renderInputValue(node.inputs, values, stringVariables) as Record<string, unknown>,
         }])
     );
-    const primaryKey = template.metadata.primaryDescription;
-    return {
-        workflow,
-        values,
-        primaryDescription: primaryKey ? String(values[primaryKey]) : template.metadata.name,
-    };
 }

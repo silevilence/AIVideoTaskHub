@@ -2,6 +2,8 @@ import type { LookupAddress } from 'node:dns';
 import { lookup as nodeLookup } from 'node:dns/promises';
 import { get as httpGet } from 'node:http';
 import { get as httpsGet } from 'node:https';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import type { ComfyApiWorkflow } from './comfy-workflow-template.js';
 
@@ -19,6 +21,7 @@ export interface ComfyIncompatibleInput {
     nodeId: string;
     classType: string;
     input: string;
+    reason?: string;
 }
 
 export interface ComfyCompatibilityResult {
@@ -65,9 +68,9 @@ function isCloudMetadataTarget(value: string): boolean {
         || hostname === 'metadata.google.internal';
 }
 
-function assertSafeTarget(value: string): void {
+function assertSafeTarget(value: string, label = 'ComfyUI 地址'): void {
     if (isCloudMetadataTarget(value)) {
-        throw new Error('ComfyUI 地址不允许访问云元数据服务');
+        throw new Error(`${label}不允许访问云元数据服务`);
     }
 }
 
@@ -97,7 +100,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function resolveSafeAddresses(
     baseUrl: string,
-    resolver: ComfyDnsResolver
+    resolver: ComfyDnsResolver,
+    label = 'ComfyUI 地址'
 ): Promise<readonly LookupAddress[]> {
     const hostname = normalizedHostname(new URL(baseUrl).hostname);
     const family = isIP(hostname);
@@ -111,8 +115,187 @@ async function resolveSafeAddresses(
         throw new Error(`无法解析 ComfyUI 地址：${message}`);
     }
     if (addresses.length === 0) throw new Error('无法解析 ComfyUI 地址：DNS 未返回地址');
-    for (const address of addresses) assertSafeTarget(address.address);
+    for (const address of addresses) assertSafeTarget(address.address, label);
     return addresses;
+}
+
+export interface SafeHttpRequestOptions {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: BodyInit | Buffer;
+    maxResponseBytes?: number;
+    targetLabel?: string;
+    safeTarget?: SafeHttpTarget;
+}
+
+export interface SafeHttpResponse {
+    status: number;
+    headers: Headers;
+    body: Buffer;
+}
+
+export interface SafeHttpTarget {
+    origin: string;
+    address: LookupAddress;
+}
+
+export async function createSafeHttpTarget(
+    value: string,
+    resolver: ComfyDnsResolver = defaultDnsResolver,
+    label = 'HTTP 地址'
+): Promise<SafeHttpTarget> {
+    let url: URL;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new Error(`${label}无效`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error(`${label}仅支持 HTTP 或 HTTPS`);
+    }
+    if (!url.hostname || url.username || url.password) throw new Error(`${label}无效`);
+    assertSafeTarget(normalizedHostname(url.hostname), label);
+    const addresses = await resolveSafeAddresses(url.toString(), resolver, label);
+    return { origin: url.origin, address: addresses[0] };
+}
+
+function requestPinnedBuffer(
+    url: URL,
+    address: LookupAddress,
+    options: SafeHttpRequestOptions
+): Promise<SafeHttpResponse> {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let request: ReturnType<typeof httpRequest>;
+        const finish = (result: SafeHttpResponse) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve(result);
+        };
+        const fail = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            if (request && !request.destroyed) request.destroy();
+            reject(error);
+        };
+        const timeout = setTimeout(() => {
+            fail(new Error(`${options.targetLabel ?? 'HTTP'}请求超时`));
+        }, 10_000);
+        const transport = url.protocol === 'https:' ? httpsRequest : httpRequest;
+        request = transport(url, {
+            method: options.method ?? 'GET',
+            headers: options.headers,
+            signal: AbortSignal.timeout(10_000),
+            lookup: (_hostname, lookupOptions, callback) => {
+                if (lookupOptions.all) callback(null, [address]);
+                else callback(null, address.address, address.family);
+            },
+            ...(url.protocol === 'https:' ? { servername: normalizedHostname(url.hostname) } : {}),
+        }, (response) => {
+            const chunks: Buffer[] = [];
+            let byteLength = 0;
+            response.on('data', (chunk: Buffer) => {
+                if (settled) return;
+                byteLength += chunk.length;
+                if (byteLength > (options.maxResponseBytes ?? 50 * 1024 * 1024)) {
+                    fail(new Error(`${options.targetLabel ?? 'HTTP'} 响应过大`));
+                    return;
+                }
+                chunks.push(chunk);
+            });
+            response.once('aborted', () => fail(new Error(
+                `${options.targetLabel ?? 'HTTP'} 响应中断`
+            )));
+            response.once('error', (error) => fail(error));
+            response.once('close', () => {
+                if (!settled && !response.complete) {
+                    fail(new Error(`${options.targetLabel ?? 'HTTP'} 响应中断`));
+                }
+            });
+            response.once('end', () => {
+                if (!response.complete) {
+                    fail(new Error(`${options.targetLabel ?? 'HTTP'} 响应中断`));
+                    return;
+                }
+                finish({
+                    status: response.statusCode ?? 0,
+                    headers: new Headers(Object.entries(response.headers).flatMap(([key, value]) => (
+                        Array.isArray(value)
+                            ? value.map((item) => [key, item] as [string, string])
+                            : value === undefined ? [] : [[key, String(value)] as [string, string]]
+                    ))),
+                    body: Buffer.concat(chunks),
+                });
+            });
+        });
+        request.once('error', (error) => fail(error));
+        const body = options.body;
+        if (typeof body === 'string' || Buffer.isBuffer(body)) request.write(body);
+        else if (body !== undefined) {
+            request.destroy(new Error('原生安全请求仅支持字符串或 Buffer 请求体'));
+            return;
+        }
+        request.end();
+    });
+}
+
+export async function requestSafeHttpUrl(
+    value: string,
+    options: SafeHttpRequestOptions = {},
+    fetcher: typeof fetch = fetch,
+    resolver: ComfyDnsResolver = defaultDnsResolver
+): Promise<SafeHttpResponse> {
+    const label = options.targetLabel ?? 'HTTP 地址';
+    let url: URL;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new Error(`${label}无效`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error(`${label}仅支持 HTTP 或 HTTPS`);
+    }
+    if (!url.hostname || url.username || url.password) throw new Error(`${label}无效`);
+    assertSafeTarget(normalizedHostname(url.hostname), label);
+    let addresses: readonly LookupAddress[];
+    if (options.safeTarget) {
+        if (url.origin !== options.safeTarget.origin) {
+            throw new Error(`${label}与已检查地址不一致`);
+        }
+        addresses = [options.safeTarget.address];
+    } else {
+        addresses = await resolveSafeAddresses(url.toString(), resolver, label);
+    }
+
+    let response: SafeHttpResponse;
+    if (fetcher === nativeFetch) {
+        response = await requestPinnedBuffer(url, addresses[0], options);
+    } else {
+        let fetched: Response;
+        try {
+            fetched = await fetcher(url.toString(), {
+                method: options.method ?? 'GET',
+                headers: options.headers,
+                body: options.body as BodyInit | undefined,
+                signal: AbortSignal.timeout(10_000),
+                redirect: 'manual',
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(`${label}请求失败：${message}`);
+        }
+        const body = Buffer.from(await fetched.arrayBuffer());
+        if (body.length > (options.maxResponseBytes ?? 50 * 1024 * 1024)) {
+            throw new Error(`${label}响应过大`);
+        }
+        response = { status: fetched.status, headers: fetched.headers, body };
+    }
+    if (response.status >= 300 && response.status < 400) {
+        throw new Error(`${label}不允许重定向`);
+    }
+    return response;
 }
 
 function requestPinnedObjectInfo(
@@ -120,8 +303,24 @@ function requestPinnedObjectInfo(
     address: LookupAddress
 ): Promise<{ status: number; body: string }> {
     return new Promise((resolve, reject) => {
+        let settled = false;
+        let request: ReturnType<typeof httpRequest>;
+        const finish = (result: { status: number; body: string }) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            resolve(result);
+        };
+        const fail = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            if (request && !request.destroyed) request.destroy();
+            reject(error);
+        };
+        const timeout = setTimeout(() => fail(new Error('ComfyUI /object_info 请求超时')), 10_000);
         const transport = url.protocol === 'https:' ? httpsGet : httpGet;
-        const request = transport(url, {
+        request = transport(url, {
             signal: AbortSignal.timeout(10_000),
             lookup: (_hostname, options, callback) => {
                 if (options.all) callback(null, [address]);
@@ -132,19 +331,33 @@ function requestPinnedObjectInfo(
             const chunks: Buffer[] = [];
             let byteLength = 0;
             response.on('data', (chunk: Buffer) => {
+                if (settled) return;
                 byteLength += chunk.length;
                 if (byteLength > 50 * 1024 * 1024) {
-                    request.destroy(new Error('ComfyUI /object_info 响应过大'));
+                    fail(new Error('ComfyUI /object_info 响应过大'));
                     return;
                 }
                 chunks.push(chunk);
             });
-            response.on('end', () => resolve({
-                status: response.statusCode ?? 0,
-                body: Buffer.concat(chunks).toString('utf8'),
-            }));
+            response.once('aborted', () => fail(new Error('ComfyUI /object_info 响应中断')));
+            response.once('error', (error) => fail(error));
+            response.once('close', () => {
+                if (!settled && !response.complete) {
+                    fail(new Error('ComfyUI /object_info 响应中断'));
+                }
+            });
+            response.once('end', () => {
+                if (!response.complete) {
+                    fail(new Error('ComfyUI /object_info 响应中断'));
+                    return;
+                }
+                finish({
+                    status: response.statusCode ?? 0,
+                    body: Buffer.concat(chunks).toString('utf8'),
+                });
+            });
         });
-        request.on('error', (error) => reject(new Error(`无法连接 ComfyUI：${error.message}`)));
+        request.once('error', (error) => fail(new Error(`无法连接 ComfyUI：${error.message}`)));
     });
 }
 
@@ -192,27 +405,37 @@ export async function checkComfyWorkflowCompatibility(
     value: string,
     workflow: ComfyApiWorkflow,
     fetcher: typeof fetch = fetch,
-    resolver: ComfyDnsResolver = defaultDnsResolver
+    resolver: ComfyDnsResolver = defaultDnsResolver,
+    safeTarget?: SafeHttpTarget
 ): Promise<ComfyCompatibilityResult> {
     const baseUrl = normalizeComfyUiBaseUrl(value);
-    const addresses = await resolveSafeAddresses(baseUrl, resolver);
+    if (safeTarget && new URL(baseUrl).origin !== safeTarget.origin) {
+        throw new Error('ComfyUI 地址与已检查地址不一致');
+    }
+    const addresses = safeTarget
+        ? [safeTarget.address]
+        : await resolveSafeAddresses(baseUrl, resolver);
     const objectInfo = await fetchObjectInfo(baseUrl, addresses, fetcher);
     const missingNodeTypes = new Set<string>();
     const missingRequiredInputs: ComfyIncompatibleInput[] = [];
     const incompatibleInputs: ComfyIncompatibleInput[] = [];
 
     for (const [nodeId, node] of Object.entries(workflow)) {
-        const nodeInfo = objectInfo[node.class_type];
-        if (!nodeInfo) {
+        const nodeInfo = Object.hasOwn(objectInfo, node.class_type)
+            ? objectInfo[node.class_type]
+            : undefined;
+        if (!isRecord(nodeInfo)) {
             missingNodeTypes.add(node.class_type);
             continue;
         }
-        const allowedInputs = new Set([
-            ...Object.keys(nodeInfo.input?.required ?? {}),
-            ...Object.keys(nodeInfo.input?.optional ?? {}),
-            ...Object.keys(nodeInfo.input?.hidden ?? {}),
-        ]);
-        for (const input of Object.keys(nodeInfo.input?.required ?? {})) {
+        const typedNodeInfo = nodeInfo as ComfyObjectInfoNode;
+        const descriptors = {
+            ...typedNodeInfo.input?.required,
+            ...typedNodeInfo.input?.optional,
+            ...typedNodeInfo.input?.hidden,
+        };
+        const allowedInputs = new Set(Object.keys(descriptors));
+        for (const input of Object.keys(typedNodeInfo.input?.required ?? {})) {
             if (!Object.hasOwn(node.inputs, input)) {
                 missingRequiredInputs.push({ nodeId, classType: node.class_type, input });
             }
@@ -220,6 +443,11 @@ export async function checkComfyWorkflowCompatibility(
         for (const input of Object.keys(node.inputs)) {
             if (!allowedInputs.has(input)) {
                 incompatibleInputs.push({ nodeId, classType: node.class_type, input });
+                continue;
+            }
+            const reason = recognizableInputIssue(descriptors[input], node.inputs[input]);
+            if (reason) {
+                incompatibleInputs.push({ nodeId, classType: node.class_type, input, reason });
             }
         }
     }
@@ -235,4 +463,50 @@ export async function checkComfyWorkflowCompatibility(
         missingRequiredInputs,
         incompatibleInputs,
     };
+}
+
+function isNodeConnection(value: unknown): boolean {
+    return Array.isArray(value)
+        && value.length === 2
+        && typeof value[0] === 'string'
+        && Number.isInteger(value[1]);
+}
+
+function recognizableInputIssue(descriptor: unknown, value: unknown): string | undefined {
+    if (isNodeConnection(value) || !Array.isArray(descriptor) || descriptor.length === 0) {
+        return undefined;
+    }
+    const declaredType = descriptor[0];
+    const config = isRecord(descriptor[1]) ? descriptor[1] : {};
+    const options = Array.isArray(declaredType)
+        ? declaredType
+        : declaredType === 'COMBO' && Array.isArray(config.options) ? config.options : undefined;
+    if (options) {
+        return options.some((option) => Object.is(option, value))
+            ? undefined
+            : '必须是已声明的选项';
+    }
+    if (declaredType === 'INT') {
+        if (typeof value !== 'number' || !Number.isInteger(value)) return '必须是整数';
+    } else if (declaredType === 'FLOAT') {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return '必须是数值';
+    } else if (declaredType === 'STRING') {
+        if (typeof value !== 'string') return '必须是字符串';
+    } else if (declaredType === 'BOOLEAN') {
+        if (typeof value !== 'boolean') return '必须是布尔值';
+    } else {
+        return undefined;
+    }
+    if (typeof value === 'number') {
+        if (typeof config.min === 'number' && value < config.min) return `不能小于 ${config.min}`;
+        if (typeof config.max === 'number' && value > config.max) return `不能大于 ${config.max}`;
+        if (typeof config.step === 'number' && config.step > 0) {
+            const base = typeof config.min === 'number' ? config.min : 0;
+            const steps = (value - base) / config.step;
+            if (Math.abs(steps - Math.round(steps)) > 1e-9) {
+                return `必须符合步进 ${config.step}`;
+            }
+        }
+    }
+    return undefined;
 }

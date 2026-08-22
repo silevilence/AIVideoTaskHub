@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 const componentModulePath = '../src/web/src/components/ComfyTaskFields';
 
 async function loadFields() {
@@ -30,7 +31,10 @@ const schema = {
     ],
 };
 
-afterEach(cleanup);
+afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+});
 
 describe('ComfyUI 动态任务字段', () => {
     it('按定义顺序生成所有控件并写入默认值', async () => {
@@ -111,5 +115,54 @@ describe('ComfyUI 动态任务字段', () => {
         expect(validateComfyBaseUrl('https://render.lan:8188/?token=x')).toBe('本次 ComfyUI 地址不能包含查询参数或片段');
         expect(validateComfyBaseUrl('https://render.lan:8188/#status')).toBe('本次 ComfyUI 地址不能包含查询参数或片段');
         expect(validateComfyBaseUrl('https://render.lan:8188/')).toBeUndefined();
+    });
+
+    it('图片字段支持本地上传和从现有图片库选择', async () => {
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.endsWith('/api/upload')) {
+                return new Response(JSON.stringify({
+                    url: '/uploads/123e4567-e89b-12d3-a456-426614174000.png',
+                    base64: 'data:image/png;base64,aGVsbG8=',
+                }), { status: 200 });
+            }
+            if (url.endsWith('/api/uploads')) {
+                return new Response(JSON.stringify([{
+                    url: '/uploads/123e4567-e89b-12d3-a456-426614174001.png',
+                    filename: 'existing.png',
+                    size: 5,
+                    createdAt: '2026-08-22T00:00:00.000Z',
+                }]), { status: 200 });
+            }
+            throw new Error(`未模拟请求：${url}`);
+        }));
+        const { ComfyTaskFields, createComfyInputDefaults } = await loadFields();
+        const changes: Array<[string, unknown]> = [];
+        render(React.createElement(ComfyTaskFields, {
+            schema,
+            values: createComfyInputDefaults(schema),
+            onChange: (key: string, value: unknown) => changes.push([key, value]),
+            baseUrl: 'http://127.0.0.1:8188',
+            onBaseUrlChange: () => undefined,
+            errors: {},
+        }));
+
+        const fileInput = screen.getByTestId('comfy-image-file-comfy-input-image');
+        expect(fileInput.getAttribute('tabindex')).toBe('-1');
+        expect(screen.getByRole('button', { name: '上传 输入图片' })).toBeTruthy();
+        const file = new File([new Uint8Array([1, 2, 3])], 'new.png', { type: 'image/png' });
+        fireEvent.change(fileInput, { target: { files: [file] } });
+        await waitFor(() => expect(changes).toContainEqual([
+            'image',
+            '/uploads/123e4567-e89b-12d3-a456-426614174000.png',
+        ]));
+
+        const user = userEvent.setup();
+        await user.click(screen.getByRole('button', { name: '打开 输入图片 图片库' }));
+        await user.click(await screen.findByRole('button', { name: '选择图片 existing.png' }));
+        expect(changes).toContainEqual([
+            'image',
+            '/uploads/123e4567-e89b-12d3-a456-426614174001.png',
+        ]);
     });
 });

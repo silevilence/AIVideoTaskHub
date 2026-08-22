@@ -24,6 +24,16 @@ function setupApp(registry: ProviderRegistry) {
     return app;
 }
 
+const compatibleTextVideoFetcher = vi.fn(async () => new Response(JSON.stringify({
+    TextNode: {
+        input: {
+            required: { text: ['STRING', {}] },
+            optional: { steps: ['INT', {}] },
+        },
+    },
+    VideoNode: { input: { required: { source: ['VIDEO', {}] } } },
+}), { status: 200 }));
+
 describe('ComfyUI Provider', () => {
     beforeEach(() => {
         closeDb();
@@ -189,7 +199,7 @@ variables:
   "2": { "class_type": "VideoNode", "inputs": { "source": ["1", 0] } }
 }`,
         });
-        const provider = new ComfyUIProvider();
+        const provider = new ComfyUIProvider({ fetcher: compatibleTextVideoFetcher });
         provider.applySettings({ base_url: 'http://127.0.0.1:8188' });
 
         const prepared = await provider.prepareTask!({
@@ -242,7 +252,7 @@ variables:
 
     it('任务接口将准备后的摘要和工作流传给 Provider 并保存', async () => {
         const registry = new ProviderRegistry();
-        const provider = new ComfyUIProvider();
+        const provider = new ComfyUIProvider({ fetcher: compatibleTextVideoFetcher });
         provider.applySettings({ base_url: 'http://127.0.0.1:8188' });
         vi.spyOn(provider, 'createTask').mockResolvedValue({ providerTaskId: 'prompt-42' });
         registry.register(provider);
@@ -268,6 +278,216 @@ variables:
                 workflowInputs: { prompt: '服务端摘要' },
             }),
         }));
-        expect(JSON.parse(response.body.extra_params).workflow).toBeDefined();
+        const savedSnapshot = JSON.parse(response.body.extra_params);
+        expect(savedSnapshot).toMatchObject({
+            snapshotVersion: 1,
+            templateId: record.id,
+            templateName: '可提交模板',
+            templateDocument: record.document,
+            workflowInputs: { prompt: '服务端摘要' },
+            resolvedWorkflowInputs: { prompt: '服务端摘要' },
+            imageResolutions: [],
+            workflow: expect.any(Object),
+        });
+
+        updateWorkflowTemplate(record.id, {
+            document: comfyWorkflowTemplateDocument('任务创建后改名'),
+        });
+        deleteWorkflowTemplate(record.id);
+        expect(JSON.parse(getAllTasks()[0].extra_params!)).toEqual(savedSnapshot);
+    });
+
+    it('按本次实际地址强制预检、上传图片并保存完整快照', async () => {
+        const calls: string[] = [];
+        const resolver = vi.fn(async () => [{ address: '127.0.0.1', family: 4 as const }]);
+        const fetcher = vi.fn(async (input: string | URL | Request) => {
+            const url = String(input);
+            calls.push(url);
+            if (url.endsWith('/object_info')) {
+                return new Response(JSON.stringify({
+                    LoadImage: {
+                        input: {
+                            required: { image: ['IMAGE', {}] },
+                            optional: { caption: ['STRING', {}] },
+                        },
+                    },
+                    SaveVideo: { input: { required: { source: ['VIDEO', {}] } } },
+                }), { status: 200 });
+            }
+            if (url.endsWith('/upload/image')) {
+                return new Response(JSON.stringify({
+                    name: 'resolved.png',
+                    subfolder: 'tasks',
+                    type: 'input',
+                }), { status: 200 });
+            }
+            throw new Error(`unexpected request: ${url}`);
+        });
+        const provider = new ComfyUIProvider({ fetcher, resolver });
+        const record = createWorkflowTemplate({
+            document: `---
+schemaVersion: 1
+name: 图片快照
+primaryDescription: prompt
+primaryOutput:
+  nodeId: "2"
+  field: videos
+  index: 0
+variables:
+  - key: prompt
+    label: 提示词
+    type: string
+  - key: image
+    label: 图片
+    type: image
+---
+{
+  "1": { "class_type": "LoadImage", "inputs": { "image": "${'${image}'}", "caption": "${'${prompt}'}" } },
+  "2": { "class_type": "SaveVideo", "inputs": { "source": ["1", 0] } }
+}`,
+        });
+
+        const prepared = await provider.prepareTask!({
+            prompt: '客户端摘要',
+            model: record.id,
+            extra: {
+                comfyuiBaseUrl: 'http://comfy.internal:8188',
+                workflowInputs: {
+                    prompt: '让云层流动',
+                    image: 'data:image/png;base64,aGVsbG8=',
+                },
+            },
+        });
+
+        expect(calls).toEqual([
+            'http://comfy.internal:8188/object_info',
+            'http://comfy.internal:8188/upload/image',
+        ]);
+        expect(resolver).toHaveBeenCalledOnce();
+        expect(prepared.extra).toMatchObject({
+            snapshotVersion: 1,
+            templateId: record.id,
+            templateName: '图片快照',
+            templateDocument: record.document,
+            comfyuiBaseUrl: 'http://comfy.internal:8188',
+            workflowInputs: {
+                prompt: '让云层流动',
+                image: 'data:image/png;base64,aGVsbG8=',
+            },
+            resolvedWorkflowInputs: {
+                prompt: '让云层流动',
+                image: 'tasks/resolved.png',
+            },
+            imageResolutions: [{
+                variableKey: 'image',
+                source: 'data:image/png;base64,aGVsbG8=',
+                name: 'resolved.png',
+                subfolder: 'tasks',
+                type: 'input',
+                fileIdentifier: 'tasks/resolved.png',
+            }],
+            primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+            workflow: {
+                '1': { class_type: 'LoadImage', inputs: { image: 'tasks/resolved.png' } },
+            },
+        });
+
+        updateWorkflowTemplate(record.id, {
+            document: comfyWorkflowTemplateDocument('后来改名'),
+        });
+        deleteWorkflowTemplate(record.id);
+        expect(prepared.extra).toMatchObject({
+            templateName: '图片快照',
+            templateDocument: expect.stringContaining('name: 图片快照'),
+            workflowInputs: { image: 'data:image/png;base64,aGVsbG8=' },
+            workflow: { '1': { inputs: { image: 'tasks/resolved.png' } } },
+        });
+    });
+
+    it('预检返回完整问题并在本地落库和远端排队前阻断', async () => {
+        const fetcher = vi.fn(async () => new Response(JSON.stringify({
+            KnownNode: {
+                input: {
+                    required: { required_input: ['STRING', {}] },
+                    optional: { count: ['INT', { min: 1, max: 10 }] },
+                },
+            },
+        }), { status: 200 }));
+        const provider = new ComfyUIProvider({ fetcher });
+        vi.spyOn(provider, 'createTask');
+        const registry = new ProviderRegistry();
+        registry.register(provider);
+        const record = createWorkflowTemplate({
+            document: `---
+schemaVersion: 1
+name: 不兼容模板
+primaryOutput:
+  nodeId: "2"
+  field: videos
+  index: 0
+variables: []
+---
+{
+  "1": { "class_type": "KnownNode", "inputs": { "unknown_input": true, "count": 99 } },
+  "2": { "class_type": "MissingNode", "inputs": {} },
+  "3": { "class_type": "__proto__", "inputs": {} }
+}`,
+        });
+
+        const response = await request(setupApp(registry))
+            .post('/api/tasks')
+            .send({
+                provider: 'comfyui',
+                prompt: '预检失败',
+                model: record.id,
+                extra: {
+                    comfyuiBaseUrl: 'http://192.168.1.31:8188',
+                    workflowInputs: {},
+                },
+            });
+
+        expect(response.status).toBe(400);
+        expect(response.body.errors).toEqual([
+            '缺少节点类型：MissingNode',
+            '缺少节点类型：__proto__',
+            '节点 1（KnownNode）缺少必填输入：required_input',
+            '节点 1（KnownNode）包含不可识别输入：unknown_input',
+            '节点 1（KnownNode）输入 count 不兼容：不能大于 10',
+        ]);
+        expect(getAllTasks()).toEqual([]);
+        expect(provider.createTask).not.toHaveBeenCalled();
+        expect(fetcher).toHaveBeenCalledWith(
+            'http://192.168.1.31:8188/object_info',
+            expect.any(Object)
+        );
+    });
+
+    it('实际地址不可达时返回诊断且不创建本地任务', async () => {
+        const provider = new ComfyUIProvider({
+            fetcher: vi.fn(async () => { throw new Error('connect ECONNREFUSED'); }),
+        });
+        const registry = new ProviderRegistry();
+        registry.register(provider);
+        const record = createWorkflowTemplate({
+            document: comfyWorkflowTemplateDocument('不可达实例模板'),
+        });
+
+        const response = await request(setupApp(registry))
+            .post('/api/tasks')
+            .send({
+                provider: 'comfyui',
+                prompt: '连接失败',
+                model: record.id,
+                extra: {
+                    comfyuiBaseUrl: 'http://192.168.1.99:8188',
+                    workflowInputs: { prompt: '连接失败' },
+                },
+            });
+
+        expect(response.status).toBe(400);
+        expect(response.body.errors).toEqual([
+            '无法连接 ComfyUI：connect ECONNREFUSED',
+        ]);
+        expect(getAllTasks()).toEqual([]);
     });
 });

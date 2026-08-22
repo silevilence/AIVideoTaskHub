@@ -284,9 +284,14 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
             preparedParams = await providerInstance.prepareTask?.(preparedParams) ?? preparedParams;
         } catch (error) {
             const message = (error as Error).message;
+            const preparationErrors = error instanceof WorkflowInputValidationError
+                ? error.errors
+                : Array.isArray((error as { errors?: unknown }).errors)
+                    ? (error as { errors: string[] }).errors
+                    : undefined;
             res.status(400).json({
                 error: `任务参数无效: ${message}`,
-                ...(error instanceof WorkflowInputValidationError ? { errors: error.errors } : {}),
+                ...(preparationErrors ? { errors: preparationErrors } : {}),
             });
             return;
         }

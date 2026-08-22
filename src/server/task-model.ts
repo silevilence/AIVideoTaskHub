@@ -221,6 +221,35 @@ export interface PurgeResult {
     filesToDelete?: string[];
 }
 
+function extractExtraImageSources(value: unknown): string[] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+    const params = value as Record<string, unknown>;
+    const sources: string[] = [];
+    if (typeof params.lastFrameImageUrl === 'string') sources.push(params.lastFrameImageUrl);
+    if (Array.isArray(params.referenceImageUrls)) {
+        sources.push(...params.referenceImageUrls.filter((item): item is string => (
+            typeof item === 'string'
+        )));
+    }
+    if (params.snapshotVersion === 1 && Array.isArray(params.imageResolutions)) {
+        for (const resolution of params.imageResolutions) {
+            if (
+                resolution
+                && typeof resolution === 'object'
+                && !Array.isArray(resolution)
+                && typeof (resolution as Record<string, unknown>).source === 'string'
+            ) {
+                sources.push((resolution as Record<string, unknown>).source as string);
+            }
+        }
+    }
+    return [...new Set(sources)];
+}
+
+function isLocalUpload(value: string): boolean {
+    return value.startsWith('/uploads/') || value.startsWith('/uploads\\');
+}
+
 /**
  * 检查图片URL是否被其他未删除（或未彻底删除）的任务使用
  * @param imageUrl 图片URL
@@ -247,11 +276,7 @@ function isImageUsedByOtherTasks(imageUrl: string, excludeTaskId: number): boole
     
     for (const row of tasks) {
         try {
-            const params = JSON.parse(row.extra_params);
-            // 检查lastFrameImageUrl
-            if (params.lastFrameImageUrl === imageUrl) return true;
-            // 检查referenceImageUrls
-            if (Array.isArray(params.referenceImageUrls) && params.referenceImageUrls.includes(imageUrl)) return true;
+            if (extractExtraImageSources(JSON.parse(row.extra_params)).includes(imageUrl)) return true;
         } catch {
             // 解析失败忽略
         }
@@ -283,7 +308,7 @@ export function purgeTask(id: number): PurgeResult {
     const filesToDelete: string[] = [];
     
     // 检查首帧图片
-    if (task.image_url && (task.image_url.startsWith('/uploads/') || task.image_url.startsWith('/uploads\\'))) {
+    if (task.image_url && isLocalUpload(task.image_url)) {
         if (!isImageUsedByOtherTasks(task.image_url, id)) {
             filesToDelete.push(task.image_url);
         }
@@ -297,22 +322,10 @@ export function purgeTask(id: number): PurgeResult {
     // 检查extra_params中的图片
     if (task.extra_params) {
         try {
-            const params = JSON.parse(task.extra_params);
-            // 检查lastFrameImageUrl
-            if (params.lastFrameImageUrl && 
-                (params.lastFrameImageUrl.startsWith('/uploads/') || params.lastFrameImageUrl.startsWith('/uploads\\'))) {
-                if (!isImageUsedByOtherTasks(params.lastFrameImageUrl, id)) {
-                    filesToDelete.push(params.lastFrameImageUrl);
-                }
-            }
-            // 检查referenceImageUrls
-            if (Array.isArray(params.referenceImageUrls)) {
-                for (const url of params.referenceImageUrls) {
-                    if (url && (url.startsWith('/uploads/') || url.startsWith('/uploads\\'))) {
-                        if (!isImageUsedByOtherTasks(url, id)) {
-                            filesToDelete.push(url);
-                        }
-                    }
+            const params = JSON.parse(task.extra_params) as unknown;
+            for (const url of extractExtraImageSources(params)) {
+                if (isLocalUpload(url) && !isImageUsedByOtherTasks(url, id)) {
+                    filesToDelete.push(url);
                 }
             }
         } catch {
@@ -323,7 +336,7 @@ export function purgeTask(id: number): PurgeResult {
     // 标记为已彻底删除
     db.prepare("UPDATE tasks SET purged_at = datetime('now') WHERE id = ?").run(id);
 
-    return { success: true, filesToDelete };
+    return { success: true, filesToDelete: [...new Set(filesToDelete)] };
 }
 
 /** 恢复回收站中的任务 */
