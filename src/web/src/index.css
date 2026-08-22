@@ -100,3 +100,20 @@ body {
 .dark ::-webkit-calendar-picker-indicator:hover {
   opacity: 1;
 }
+
+.json-editor-shell .json-key {
+  color: #7dd3fc;
+}
+
+.json-editor-shell .json-string {
+  color: #86efac;
+}
+
+.json-editor-shell .json-number {
+  color: #fdba74;
+}
+
+.json-editor-shell .json-literal {
+  color: #c4b5fd;
+  font-weight: 600;
+}

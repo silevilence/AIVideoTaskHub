@@ -39,7 +39,7 @@ import {
 } from './text-settings.js';
 import { callLLM, callLLMStream, fetchLLMModels, type ContentPart } from './llm-client.js';
 import { resolveCreateTaskImages, resolveImageUrl, resolveImageUrls } from './image-utils.js';
-import { createComfyWorkflowRouter } from './comfy-workflow-router.js';
+import { createComfyUiRouter, createComfyWorkflowRouter } from './comfy-workflow-router.js';
 import {
     getAllPrompts,
     getPromptById,
@@ -62,6 +62,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
     const router = Router();
     const dataDir = process.env.DATA_DIR || 'data';
 
+    router.use('/comfyui', createComfyUiRouter());
     router.use('/comfyui/workflows', createComfyWorkflowRouter());
 
     // 视频提供商 API Key 解析辅助

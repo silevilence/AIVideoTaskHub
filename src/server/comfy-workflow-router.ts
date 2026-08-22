@@ -10,6 +10,13 @@ import {
     updateWorkflowTemplate,
 } from './comfy-workflow-model.js';
 import { parseWorkflowTemplateDocument } from './comfy-workflow-template.js';
+import {
+    checkComfyWorkflowCompatibility,
+    normalizeComfyUiBaseUrl,
+} from './comfyui-connection.js';
+import { getSetting, setSetting } from './task-model.js';
+
+const COMFYUI_BASE_URL_SETTING = 'provider:comfyui:base_url';
 
 function databaseErrorMessage(error: unknown): string {
     if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
@@ -172,6 +179,85 @@ export function createComfyWorkflowRouter(): Router {
             return;
         }
         res.json(template);
+    });
+
+    return router;
+}
+
+function resolveCompatibilityDocument(body: unknown): string | undefined {
+    if (!body || typeof body !== 'object') return undefined;
+    const request = body as { id?: unknown; document?: unknown };
+    if (typeof request.document === 'string') return request.document;
+    if (typeof request.id !== 'string') return undefined;
+    return getWorkflowTemplateById(request.id)?.document;
+}
+
+/** Routes shared by the workflow manager and the future ComfyUI provider. */
+export function createComfyUiRouter(): Router {
+    const router = Router();
+
+    router.get('/settings', (_req, res) => {
+        res.json({ baseUrl: getSetting(COMFYUI_BASE_URL_SETTING) ?? '' });
+    });
+
+    router.put('/settings', (req, res) => {
+        if (typeof req.body?.baseUrl !== 'string') {
+            res.status(400).json({ error: '缺少 ComfyUI 地址' });
+            return;
+        }
+        try {
+            const baseUrl = normalizeComfyUiBaseUrl(req.body.baseUrl);
+            setSetting(COMFYUI_BASE_URL_SETTING, baseUrl);
+            res.json({ baseUrl });
+        } catch (error) {
+            res.status(400).json({ error: databaseErrorMessage(error) });
+        }
+    });
+
+    router.post('/connection/test', async (req, res) => {
+        const baseUrl = typeof req.body?.baseUrl === 'string'
+            ? req.body.baseUrl
+            : getSetting(COMFYUI_BASE_URL_SETTING);
+        if (!baseUrl) {
+            res.status(400).json({ error: '请先设置默认 ComfyUI 地址' });
+            return;
+        }
+        let normalizedBaseUrl: string;
+        try {
+            normalizedBaseUrl = normalizeComfyUiBaseUrl(baseUrl);
+        } catch (error) {
+            res.status(400).json({ error: databaseErrorMessage(error) });
+            return;
+        }
+        try {
+            const result = await checkComfyWorkflowCompatibility(normalizedBaseUrl, {});
+            res.json(result);
+        } catch (error) {
+            res.status(502).json({ error: databaseErrorMessage(error) });
+        }
+    });
+
+    router.post('/workflows/check', async (req, res) => {
+        const document = resolveCompatibilityDocument(req.body);
+        if (!document) {
+            res.status(404).json({ error: '工作流模板不存在或缺少模板文档' });
+            return;
+        }
+        const validation = parseWorkflowTemplateDocument(document);
+        if (!validation.template || validation.errors.length > 0) {
+            res.status(400).json({ error: '工作流模板校验失败', ...validation });
+            return;
+        }
+        const baseUrl = getSetting(COMFYUI_BASE_URL_SETTING);
+        if (!baseUrl) {
+            res.status(400).json({ error: '请先设置默认 ComfyUI 地址' });
+            return;
+        }
+        try {
+            res.json(await checkComfyWorkflowCompatibility(baseUrl, validation.template.workflow));
+        } catch (error) {
+            res.status(502).json({ error: databaseErrorMessage(error) });
+        }
     });
 
     return router;

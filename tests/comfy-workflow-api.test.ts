@@ -1,6 +1,6 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeDb, initDb } from '../src/server/database.js';
 import { ProviderRegistry } from '../src/server/provider-registry.js';
 import { createTaskRouter } from '../src/server/task-router.js';
@@ -19,6 +19,7 @@ function setupApp() {
 
 describe('ComfyUI 工作流模板 API', () => {
     beforeEach(() => {
+        vi.unstubAllGlobals();
         closeDb();
         initDb(':memory:');
     });
@@ -132,5 +133,71 @@ describe('ComfyUI 工作流模板 API', () => {
             .send({ name: '警告副本', confirmWarnings: true });
         expect(confirmed.status).toBe(201);
         expect(confirmed.body.warnings).toContain('模板变量已定义但未使用：seed');
+    });
+
+    it('保存并读取规范化的默认 ComfyUI 地址', async () => {
+        const app = setupApp();
+
+        expect((await request(app).get('/api/comfyui/settings')).body).toEqual({ baseUrl: '' });
+        const saved = await request(app)
+            .put('/api/comfyui/settings')
+            .send({ baseUrl: ' http://127.0.0.1:8188/// ' });
+
+        expect(saved.status).toBe(200);
+        expect(saved.body).toEqual({ baseUrl: 'http://127.0.0.1:8188' });
+        expect((await request(app).get('/api/comfyui/settings')).body).toEqual(saved.body);
+
+        const rejected = await request(app)
+            .put('/api/comfyui/settings')
+            .send({ baseUrl: 'file:///tmp/comfy' });
+        expect(rejected.status).toBe(400);
+        expect(rejected.body.error).toBe('ComfyUI 地址仅支持 HTTP 或 HTTPS');
+
+        const invalidTest = await request(app)
+            .post('/api/comfyui/connection/test')
+            .send({ baseUrl: 'not-a-url' });
+        expect(invalidTest.status).toBe(400);
+        expect(invalidTest.body.error).toBe('ComfyUI 地址无效');
+    });
+
+    it('使用默认地址检查模板兼容性并准确返回缺失节点', async () => {
+        const app = setupApp();
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+            TextNode: { input: { required: { text: ['STRING', {}] } } },
+        }), { status: 200 })));
+        await request(app)
+            .put('/api/comfyui/settings')
+            .send({ baseUrl: 'http://127.0.0.1:8188' });
+        const created = await request(app)
+            .post('/api/comfyui/workflows')
+            .send({ document: templateDocument('兼容性模板') });
+
+        const checked = await request(app)
+            .post('/api/comfyui/workflows/check')
+            .send({ id: created.body.template.id });
+
+        expect(checked.status).toBe(200);
+        expect(checked.body.ok).toBe(false);
+        expect(checked.body.missingNodeTypes).toEqual(['VideoNode']);
+        expect(checked.body.incompatibleInputs).toEqual([]);
+    });
+
+    it('在线检查失败不影响模板离线保存', async () => {
+        const app = setupApp();
+        vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+        await request(app)
+            .put('/api/comfyui/settings')
+            .send({ baseUrl: 'http://127.0.0.1:8188' });
+
+        const checked = await request(app)
+            .post('/api/comfyui/workflows/check')
+            .send({ document: templateDocument('离线模板') });
+        expect(checked.status).toBe(502);
+        expect(checked.body.error).toBe('无法连接 ComfyUI：offline');
+
+        const saved = await request(app)
+            .post('/api/comfyui/workflows')
+            .send({ document: templateDocument('离线模板') });
+        expect(saved.status).toBe(201);
     });
 });

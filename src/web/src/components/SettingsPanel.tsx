@@ -6,19 +6,20 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
-import { Settings, Save, Check, Search, RefreshCw, Server, Database, Video, MessageSquare, BookOpen } from 'lucide-react';
+import { Settings, Save, Check, Search, RefreshCw, Server, Database, Video, MessageSquare, BookOpen, Workflow } from 'lucide-react';
 import { TextSettingsPanel } from './TextSettingsPanel';
 import { PromptLibrary } from './PromptLibrary';
 import { McpSettingsPanel } from './McpSettingsPanel';
+import { ComfyWorkflowManager } from './ComfyWorkflowManager';
 import { cn } from '../lib/utils';
 
-type SettingsTab = 'video' | 'text' | 'prompts' | 'mcp';
+type SettingsTab = 'video' | 'text' | 'prompts' | 'comfyui' | 'mcp';
 
 export function SettingsPanel() {
     const [activeTab, setActiveTab] = useState<SettingsTab>('video');
 
     return (
-        <div className="max-w-2xl mx-auto space-y-6">
+        <div className={cn('mx-auto space-y-6', activeTab === 'comfyui' ? 'max-w-7xl' : 'max-w-2xl')}>
             <div>
                 <h2 className="text-xl font-heading font-bold tracking-wide">设置</h2>
                 <p className="text-sm text-muted-foreground mt-1">
@@ -65,6 +66,18 @@ export function SettingsPanel() {
                     提示词库
                 </button>
                 <button
+                    onClick={() => setActiveTab('comfyui')}
+                    className={cn(
+                        'flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer',
+                        activeTab === 'comfyui'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground',
+                    )}
+                >
+                    <Workflow className="h-4 w-4" />
+                    ComfyUI 工作流
+                </button>
+                <button
                     onClick={() => setActiveTab('mcp')}
                     className={cn(
                         'flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer',
@@ -81,6 +94,7 @@ export function SettingsPanel() {
             {activeTab === 'video' && <VideoSettingsPanel />}
             {activeTab === 'text' && <TextSettingsPanel />}
             {activeTab === 'prompts' && <PromptLibrary />}
+            {activeTab === 'comfyui' && <ComfyWorkflowManager />}
             {activeTab === 'mcp' && <McpSettingsPanel />}
         </div>
     );

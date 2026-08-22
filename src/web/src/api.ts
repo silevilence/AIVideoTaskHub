@@ -675,3 +675,149 @@ export async function stopMcpServer(): Promise<McpStatus> {
     }
     return res.json();
 }
+
+// ── ComfyUI 工作流管理 API ──────────────────────────
+
+export interface ComfyWorkflowTemplate {
+    id: string;
+    name: string;
+    document: string;
+    enabled: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ComfyCompatibilityResult {
+    ok: boolean;
+    baseUrl: string;
+    nodeTypeCount: number;
+    missingNodeTypes: string[];
+    missingRequiredInputs: { nodeId: string; classType: string; input: string }[];
+    incompatibleInputs: { nodeId: string; classType: string; input: string }[];
+}
+
+export class ComfyWorkflowApiError extends Error {
+    constructor(
+        message: string,
+        public readonly status: number,
+        public readonly errors: string[] = [],
+        public readonly warnings: string[] = []
+    ) {
+        super(message);
+        this.name = 'ComfyWorkflowApiError';
+    }
+}
+
+async function comfyRequest<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await fetch(`${BASE}/comfyui${path}`, init);
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as {
+            error?: string;
+            errors?: string[];
+            warnings?: string[];
+        };
+        throw new ComfyWorkflowApiError(
+            body.error || 'ComfyUI 请求失败',
+            res.status,
+            body.errors,
+            body.warnings
+        );
+    }
+    return res.json() as Promise<T>;
+}
+
+export async function fetchComfyWorkflowTemplates(query?: string): Promise<ComfyWorkflowTemplate[]> {
+    const suffix = query ? `?q=${encodeURIComponent(query)}` : '';
+    return comfyRequest(`/workflows${suffix}`);
+}
+
+export async function fetchComfyWorkflowTemplate(id: string): Promise<ComfyWorkflowTemplate> {
+    return comfyRequest(`/workflows/${encodeURIComponent(id)}`);
+}
+
+export async function saveComfyWorkflowTemplate(
+    id: string | undefined,
+    document: string,
+    enabled: boolean,
+    confirmWarnings = false
+): Promise<{ template: ComfyWorkflowTemplate; warnings: string[] }> {
+    return comfyRequest(id ? `/workflows/${encodeURIComponent(id)}` : '/workflows', {
+        method: id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document, enabled, confirmWarnings }),
+    });
+}
+
+export async function importComfyWorkflowTemplate(
+    document: string,
+    confirmWarnings = false
+): Promise<{ template: ComfyWorkflowTemplate; warnings: string[] }> {
+    return comfyRequest('/workflows/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document, confirmWarnings }),
+    });
+}
+
+export async function duplicateComfyWorkflowTemplate(
+    id: string,
+    name: string,
+    confirmWarnings = false
+): Promise<{ template: ComfyWorkflowTemplate; warnings: string[] }> {
+    return comfyRequest(`/workflows/${encodeURIComponent(id)}/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, confirmWarnings }),
+    });
+}
+
+export async function setComfyWorkflowTemplateEnabled(
+    id: string,
+    enabled: boolean
+): Promise<ComfyWorkflowTemplate> {
+    return comfyRequest(`/workflows/${encodeURIComponent(id)}/enabled`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+    });
+}
+
+export async function deleteComfyWorkflowTemplate(id: string): Promise<void> {
+    await comfyRequest(`/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function exportComfyWorkflowTemplate(id: string): Promise<string> {
+    const res = await fetch(`${BASE}/comfyui/workflows/${encodeURIComponent(id)}/export`);
+    if (!res.ok) throw new Error('导出工作流模板失败');
+    return res.text();
+}
+
+export async function fetchComfyUiSettings(): Promise<{ baseUrl: string }> {
+    return comfyRequest('/settings');
+}
+
+export async function updateComfyUiSettings(baseUrl: string): Promise<{ baseUrl: string }> {
+    return comfyRequest('/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseUrl }),
+    });
+}
+
+export async function testComfyUiConnection(baseUrl: string): Promise<ComfyCompatibilityResult> {
+    return comfyRequest('/connection/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseUrl }),
+    });
+}
+
+export async function checkComfyWorkflowCompatibility(
+    document: string
+): Promise<ComfyCompatibilityResult> {
+    return comfyRequest('/workflows/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document }),
+    });
+}
