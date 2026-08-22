@@ -18,7 +18,7 @@ import {
     purgeTask,
     restoreTask,
 } from './task-model.js';
-import type { ModelInfo } from './provider.js';
+import type { CreateTaskParams, ModelInfo } from './provider.js';
 import { logger } from './logger.js';
 import {
     getTextSettings,
@@ -40,6 +40,7 @@ import {
 import { callLLM, callLLMStream, fetchLLMModels, type ContentPart } from './llm-client.js';
 import { resolveCreateTaskImages, resolveImageUrl, resolveImageUrls } from './image-utils.js';
 import { createComfyUiRouter, createComfyWorkflowRouter } from './comfy-workflow-router.js';
+import { WorkflowInputValidationError } from './comfy-workflow-renderer.js';
 import {
     getAllPrompts,
     getPromptById,
@@ -275,18 +276,39 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
             return;
         }
 
+        const providerInstance = registry.get(provider)!;
         const extraParams = (extra && typeof extra === 'object') ? extra as Record<string, unknown> : undefined;
-        const task = insertTask({ provider, prompt, model, imageUrl, extraParams });
+        let preparedParams: CreateTaskParams = { prompt, model, imageUrl, extra: extraParams };
 
         try {
-            const providerInstance = registry.get(provider)!;
+            preparedParams = await providerInstance.prepareTask?.(preparedParams) ?? preparedParams;
+        } catch (error) {
+            const message = (error as Error).message;
+            res.status(400).json({
+                error: `任务参数无效: ${message}`,
+                ...(error instanceof WorkflowInputValidationError ? { errors: error.errors } : {}),
+            });
+            return;
+        }
 
+        const task = insertTask({
+            provider,
+            prompt: preparedParams.prompt,
+            model: preparedParams.model,
+            imageUrl: preparedParams.imageUrl,
+            extraParams: preparedParams.extra,
+        });
+
+        try {
             // 将本地 /uploads/ 路径转换为 base64，确保外部 API 可访问
-            const { resolvedImageUrl, resolvedExtra } = resolveCreateTaskImages(imageUrl, extraParams);
+            const { resolvedImageUrl, resolvedExtra } = resolveCreateTaskImages(
+                preparedParams.imageUrl,
+                preparedParams.extra
+            );
 
             const result = await providerInstance.createTask({
-                prompt,
-                model,
+                prompt: preparedParams.prompt,
+                model: preparedParams.model,
                 imageUrl: resolvedImageUrl,
                 extra: resolvedExtra,
             });

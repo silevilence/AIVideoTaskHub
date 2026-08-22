@@ -23,6 +23,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<Tab>('create');
   const [refreshKey, setRefreshKey] = useState(0);
   const [applyParams, setApplyParams] = useState<ApplyParams | null>(null);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'video' | 'comfyui'>('video');
   const { theme, setTheme } = useTheme();
 
   // 从任务列表或回收站套用参数
@@ -53,7 +54,10 @@ function App() {
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    if (tab.id === 'settings') setSettingsInitialTab('video');
+                    setActiveTab(tab.id);
+                  }}
                   className={cn(
                     'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors duration-200 cursor-pointer whitespace-nowrap',
                     activeTab === tab.id
@@ -83,11 +87,15 @@ function App() {
             }}
             applyParams={applyParams}
             onApplyParamsConsumed={handleApplyParamsConsumed}
+            onManageComfyWorkflows={() => {
+              setSettingsInitialTab('comfyui');
+              setActiveTab('settings');
+            }}
           />
         )}
         {activeTab === 'tasks' && <TaskList refreshKey={refreshKey} onApplyParams={handleApplyParams} />}
         {activeTab === 'trash' && <RecycleBin onApplyParams={handleApplyParams} />}
-        {activeTab === 'settings' && <SettingsPanel />}
+        {activeTab === 'settings' && <SettingsPanel initialTab={settingsInitialTab} />}
       </main>
     </div>
   );

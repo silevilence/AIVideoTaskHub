@@ -13,6 +13,7 @@ import { ComfyUIProvider } from '../src/server/providers/comfyui-provider.js';
 import { MockProvider } from '../src/server/providers/mock-provider.js';
 import { createTaskRouter } from '../src/server/task-router.js';
 import { getSetting } from '../src/server/task-model.js';
+import { getAllTasks } from '../src/server/task-model.js';
 import { registerAllTools } from '../src/server/mcp/mcp-tools.js';
 import { comfyWorkflowTemplateDocument } from './fixtures/comfy-workflow.js';
 
@@ -162,5 +163,111 @@ describe('ComfyUI Provider', () => {
             primaryDescription: 'prompt',
             primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
         });
+    });
+
+    it('在创建任务前校验变量并生成类型安全的工作流快照', async () => {
+        const record = createWorkflowTemplate({
+            document: `---
+schemaVersion: 1
+name: 渲染模板
+primaryDescription: prompt
+primaryOutput:
+  nodeId: "2"
+  field: videos
+  index: 0
+variables:
+  - key: prompt
+    label: 提示词
+    type: string
+  - key: steps
+    label: 步数
+    type: integer
+    default: 20
+---
+{
+  "1": { "class_type": "TextNode", "inputs": { "text": "${'${prompt}'}", "steps": "${'${steps}'}" } },
+  "2": { "class_type": "VideoNode", "inputs": { "source": ["1", 0] } }
+}`,
+        });
+        const provider = new ComfyUIProvider();
+        provider.applySettings({ base_url: 'http://127.0.0.1:8188' });
+
+        const prepared = await provider.prepareTask!({
+            prompt: 'ignored client summary',
+            model: record.id,
+            extra: {
+                workflowInputs: { prompt: '雪山航拍', steps: 20 },
+                comfyuiBaseUrl: 'http://192.168.1.20:8188/',
+            },
+        });
+
+        expect(prepared.prompt).toBe('雪山航拍');
+        expect(prepared.extra).toMatchObject({
+            templateId: record.id,
+            comfyuiBaseUrl: 'http://192.168.1.20:8188',
+            workflowInputs: { prompt: '雪山航拍', steps: 20 },
+            primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+            workflow: {
+                '1': { class_type: 'TextNode', inputs: { text: '雪山航拍', steps: 20 } },
+            },
+        });
+        expect(provider.getCurrentSettings().base_url).toBe('http://127.0.0.1:8188');
+    });
+
+    it('任务接口在落库前拒绝缺失或越权的工作流变量', async () => {
+        const registry = new ProviderRegistry();
+        const provider = new ComfyUIProvider();
+        provider.applySettings({ base_url: 'http://127.0.0.1:8188' });
+        registry.register(provider);
+        const record = createWorkflowTemplate({
+            document: comfyWorkflowTemplateDocument('任务校验模板'),
+        });
+
+        const response = await request(setupApp(registry))
+            .post('/api/tasks')
+            .send({
+                provider: 'comfyui',
+                prompt: '伪造摘要',
+                model: record.id,
+                extra: { workflowInputs: { injected: 'evil' } },
+            });
+
+        expect(response.status).toBe(400);
+        expect(response.body.errors).toEqual(expect.arrayContaining([
+            'prompt 不能为空',
+            '存在未定义的变量值：injected',
+        ]));
+        expect(getAllTasks()).toEqual([]);
+    });
+
+    it('任务接口将准备后的摘要和工作流传给 Provider 并保存', async () => {
+        const registry = new ProviderRegistry();
+        const provider = new ComfyUIProvider();
+        provider.applySettings({ base_url: 'http://127.0.0.1:8188' });
+        vi.spyOn(provider, 'createTask').mockResolvedValue({ providerTaskId: 'prompt-42' });
+        registry.register(provider);
+        const record = createWorkflowTemplate({
+            document: comfyWorkflowTemplateDocument('可提交模板'),
+        });
+
+        const response = await request(setupApp(registry))
+            .post('/api/tasks')
+            .send({
+                provider: 'comfyui',
+                prompt: '客户端摘要',
+                model: record.id,
+                extra: { workflowInputs: { prompt: '服务端摘要' } },
+            });
+
+        expect(response.status).toBe(201);
+        expect(response.body.prompt).toBe('服务端摘要');
+        expect(provider.createTask).toHaveBeenCalledWith(expect.objectContaining({
+            prompt: '服务端摘要',
+            extra: expect.objectContaining({
+                templateId: record.id,
+                workflowInputs: { prompt: '服务端摘要' },
+            }),
+        }));
+        expect(JSON.parse(response.body.extra_params).workflow).toBeDefined();
     });
 });

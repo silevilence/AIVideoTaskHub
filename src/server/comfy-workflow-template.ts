@@ -73,7 +73,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isRecognizableImageSource(value: unknown): value is string {
+export function isRecognizableImageSource(value: unknown): value is string {
     if (typeof value !== 'string') return false;
     const source = value.trim();
     if (/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+$/i.test(source)) return true;

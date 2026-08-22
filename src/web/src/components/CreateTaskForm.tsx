@@ -9,6 +9,14 @@ import { Card, CardContent } from './ui/card';
 import { cn } from '../lib/utils';
 import { Sparkles, Upload, X, ChevronDown, AlertTriangle, ClipboardPaste, Play, Info, ExternalLink, Image as ImageIcon, Wand2 } from 'lucide-react';
 import { PromptOptimizer } from './PromptOptimizer';
+import {
+    ComfyTaskFields,
+    createComfyInputDefaults,
+    validateComfyBaseUrl,
+    validateComfyInputValues,
+    type ComfyInputErrors,
+    type ComfyInputValues,
+} from './ComfyTaskFields';
 import siliconflowIcon from '../assets/icons/siliconflow.png';
 import volcengineIcon from '../assets/icons/volcengine.png';
 import aihubmixIcon from '../assets/icons/aihubmix.png';
@@ -34,10 +42,12 @@ export function CreateTaskForm({
     onCreated,
     applyParams,
     onApplyParamsConsumed,
+    onManageComfyWorkflows,
 }: {
     onCreated: () => void;
     applyParams?: ApplyParams | null;
     onApplyParamsConsumed?: () => void;
+    onManageComfyWorkflows?: () => void;
 }) {
     const [providerModels, setProviderModels] = useState<Record<string, ModelInfo[]>>({});
     // 使用 ref 保存 applyParams，以便在初始加载时能正确检测是否有待套用参数
@@ -57,6 +67,9 @@ export function CreateTaskForm({
     const modelDropdownRef = useRef<HTMLDivElement>(null);
     const [allSettings, setAllSettings] = useState<Record<string, ProviderSettings>>({});
     const [settingsWarning, setSettingsWarning] = useState('');
+    const [comfyInputs, setComfyInputs] = useState<ComfyInputValues>({});
+    const [comfyInputErrors, setComfyInputErrors] = useState<ComfyInputErrors>({});
+    const [comfyBaseUrl, setComfyBaseUrl] = useState('');
 
     // 套用参数弹窗相关状态
     const [applyModalOpen, setApplyModalOpen] = useState(false);
@@ -115,6 +128,8 @@ export function CreateTaskForm({
     const models: ModelInfo[] = provider ? (providerModels[provider] ?? []) : [];
     const currentModelInfo = models.find((m) => m.id === model);
     const caps: ModelCapabilities | undefined = currentModelInfo?.capabilities;
+    const comfySchema = currentModelInfo?.parameterSchema;
+    const isComfyTask = provider === 'comfyui' && comfySchema?.kind === 'comfyui-workflow';
 
     // 当前模型是否有高级能力（有 capabilities 且有实际功能）
     const hasAdvancedCaps = !!(caps && (caps.resolutions.length > 0 || caps.ratios));
@@ -173,6 +188,24 @@ export function CreateTaskForm({
         }
     }, [providerModels, applyParams, appliedParams, provider]);
 
+    useEffect(() => {
+        if (!comfySchema) {
+            setComfyInputs({});
+            setComfyInputErrors({});
+            return;
+        }
+        setComfyInputs(createComfyInputDefaults(comfySchema));
+        setComfyInputErrors({});
+    }, [comfySchema]);
+
+    useEffect(() => {
+        if (provider !== 'comfyui') return;
+        const settings = allSettings.comfyui;
+        const configured = settings?.values.base_url;
+        const fallback = settings?.schema.find((item) => item.key === 'base_url')?.defaultValue;
+        setComfyBaseUrl(configured || fallback || '');
+    }, [provider, allSettings]);
+
     // 关闭下拉菜单（点击外部时）
     useEffect(() => {
         function handleClickOutside(e: MouseEvent) {
@@ -190,11 +223,12 @@ export function CreateTaskForm({
     // 检查当前 provider 的必填设置是否已配置
     const missingSettings = useMemo(() => {
         if (!provider || !allSettings[provider]) return [];
+        if (provider === 'comfyui' && comfyBaseUrl.trim()) return [];
         const ps = allSettings[provider];
         return ps.schema
             .filter((s) => s.required && !ps.values[s.key])
             .map((s) => s.label);
-    }, [provider, allSettings]);
+    }, [provider, allSettings, comfyBaseUrl]);
 
     // 当 provider 变化时更新警告
     useEffect(() => {
@@ -478,13 +512,30 @@ export function CreateTaskForm({
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!provider || !prompt.trim()) return;
+        if (!provider || (!isComfyTask && !prompt.trim())) return;
 
         setSubmitting(true);
         setError('');
         try {
             const extra: Record<string, unknown> = {};
-            if (hasAdvancedCaps && caps) {
+            let submitPrompt = prompt.trim();
+            if (isComfyTask && comfySchema) {
+                const validationErrors = validateComfyInputValues(comfySchema, comfyInputs);
+                const baseUrlError = validateComfyBaseUrl(comfyBaseUrl);
+                if (baseUrlError) validationErrors.baseUrl = baseUrlError;
+                setComfyInputErrors(validationErrors);
+                if (Object.keys(validationErrors).length > 0) {
+                    throw new Error('请修正工作流参数后再创建任务');
+                }
+                extra.workflowInputs = comfyInputs;
+                extra.comfyuiBaseUrl = comfyBaseUrl.trim();
+                const primaryValue = comfySchema.primaryDescription
+                    ? comfyInputs[comfySchema.primaryDescription]
+                    : undefined;
+                submitPrompt = typeof primaryValue === 'string' && primaryValue.trim()
+                    ? primaryValue.trim()
+                    : currentModelInfo?.displayName ?? 'ComfyUI 工作流任务';
+            } else if (hasAdvancedCaps && caps) {
                 if (caps.ratios) extra.ratio = volcRatio;
                 extra.resolution = volcResolution;
                 if (volcAutoDuration && caps.autoDuration) {
@@ -518,12 +569,14 @@ export function CreateTaskForm({
 
             await createTask({
                 provider,
-                prompt: prompt.trim(),
+                prompt: submitPrompt,
                 model: model.trim() || undefined,
                 imageUrl: submitImageUrl,
-                extra: hasAdvancedCaps ? extra : undefined,
+                extra: isComfyTask || hasAdvancedCaps ? extra : undefined,
             });
             setPrompt('');
+            if (comfySchema) setComfyInputs(createComfyInputDefaults(comfySchema));
+            setComfyInputErrors({});
             resetVolcState();
             setSubmitting(false);
             onCreated();
@@ -656,6 +709,16 @@ export function CreateTaskForm({
                                 </div>
                             </div>
                         </div>
+
+                        {provider === 'comfyui' && models.length === 0 && (
+                            <div className="rounded-xl border border-dashed border-primary/30 bg-primary/[0.03] p-5 text-center">
+                                <p className="text-sm font-medium">还没有可用的 ComfyUI 工作流</p>
+                                <p className="mt-1 text-xs text-muted-foreground">请先新建并启用一个 API 格式工作流模板。</p>
+                                <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onManageComfyWorkflows}>
+                                    管理工作流模板
+                                </Button>
+                            </div>
+                        )}
 
                         {/* 生成模式选择 */}
                         {hasAdvancedCaps && imageModes.length > 1 && (
@@ -1117,7 +1180,34 @@ export function CreateTaskForm({
                             </div>
                         )}
 
-                        <div className="space-y-2">
+                        {isComfyTask && comfySchema && (
+                            <ComfyTaskFields
+                                schema={comfySchema}
+                                values={comfyInputs}
+                                onChange={(key, value) => {
+                                    setComfyInputs((current) => ({ ...current, [key]: value }));
+                                    setComfyInputErrors((current) => {
+                                        if (!current[key]) return current;
+                                        const next = { ...current };
+                                        delete next[key];
+                                        return next;
+                                    });
+                                }}
+                                baseUrl={comfyBaseUrl}
+                                onBaseUrlChange={(value) => {
+                                    setComfyBaseUrl(value);
+                                    setComfyInputErrors((current) => {
+                                        if (!current.baseUrl) return current;
+                                        const next = { ...current };
+                                        delete next.baseUrl;
+                                        return next;
+                                    });
+                                }}
+                                errors={comfyInputErrors}
+                            />
+                        )}
+
+                        {!isComfyTask && <div className="space-y-2">
                             <div className="flex items-center justify-between">
                                 <Label htmlFor="prompt">Prompt</Label>
                                 <Button
@@ -1139,7 +1229,11 @@ export function CreateTaskForm({
                                 placeholder="描述你想生成的视频内容..."
                                 rows={4}
                             />
-                        </div>
+                        </div>}
+
+                        {comfyInputErrors.baseUrl && (
+                            <p className="text-xs text-destructive">{comfyInputErrors.baseUrl}</p>
+                        )}
 
                         {error && (
                             <p className="text-sm text-destructive">{error}</p>
@@ -1164,7 +1258,12 @@ export function CreateTaskForm({
                             <Button
                                 type="submit"
                                 className="flex-1"
-                                disabled={submitting || !prompt.trim() || missingSettings.length > 0}
+                                disabled={
+                                    submitting
+                                    || !model
+                                    || (!isComfyTask && !prompt.trim())
+                                    || missingSettings.length > 0
+                                }
                             >
                                 <Sparkles className="h-4 w-4 mr-2" />
                                 {submitting ? '提交中...' : '创建任务'}

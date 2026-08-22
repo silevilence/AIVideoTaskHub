@@ -143,6 +143,9 @@ export interface VideoProvider {
     /** 向平台提交生成任务，返回平台侧任务 ID */
     createTask(params: CreateTaskParams): Promise<CreateTaskResult>;
 
+    /** 在任务写入本地数据库前校验并生成 Provider 专属参数快照 */
+    prepareTask?(params: CreateTaskParams): Promise<CreateTaskParams> | CreateTaskParams;
+
     /** 查询平台侧任务的最新状态 */
     getStatus(providerTaskId: string): Promise<TaskStatusResult>;
 

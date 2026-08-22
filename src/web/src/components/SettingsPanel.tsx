@@ -15,8 +15,8 @@ import { cn } from '../lib/utils';
 
 type SettingsTab = 'video' | 'text' | 'prompts' | 'comfyui' | 'mcp';
 
-export function SettingsPanel() {
-    const [activeTab, setActiveTab] = useState<SettingsTab>('video');
+export function SettingsPanel({ initialTab = 'video' }: { initialTab?: SettingsTab }) {
+    const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
     return (
         <div className={cn('mx-auto space-y-6', activeTab === 'comfyui' ? 'max-w-7xl' : 'max-w-2xl')}>

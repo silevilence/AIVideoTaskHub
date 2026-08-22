@@ -67,31 +67,35 @@ export interface ModelCapabilities {
     ratios?: string[];
 }
 
+export interface ModelParameterDefinition {
+    key: string;
+    label: string;
+    description?: string;
+    type: 'integer' | 'number' | 'string' | 'boolean' | 'option' | 'image';
+    default?: unknown;
+    min?: number;
+    max?: number;
+    step?: number;
+    multiline?: boolean;
+    minLength?: number;
+    maxLength?: number;
+    options?: { label: string; value: string }[];
+}
+
+export interface ModelParameterSchema {
+    kind: 'comfyui-workflow';
+    variables: ModelParameterDefinition[];
+    primaryDescription?: string;
+    primaryOutput: { nodeId: string; field: string; index: number };
+}
+
 export interface ModelInfo {
     id: string;
     displayName: string;
     capabilities?: ModelCapabilities;
     disabled?: boolean;
     disabledReason?: string;
-    parameterSchema?: {
-        kind: 'comfyui-workflow';
-        variables: Array<{
-            key: string;
-            label: string;
-            description?: string;
-            type: 'integer' | 'number' | 'string' | 'boolean' | 'option' | 'image';
-            default?: unknown;
-            min?: number;
-            max?: number;
-            step?: number;
-            multiline?: boolean;
-            minLength?: number;
-            maxLength?: number;
-            options?: { label: string; value: string }[];
-        }>;
-        primaryDescription?: string;
-        primaryOutput: { nodeId: string; field: string; index: number };
-    };
+    parameterSchema?: ModelParameterSchema;
 }
 
 export async function fetchProviderModels(): Promise<Record<string, ModelInfo[]>> {
