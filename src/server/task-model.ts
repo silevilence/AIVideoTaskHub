@@ -18,6 +18,14 @@ export interface Task {
     purged_at: string | null;
 }
 
+export type TaskListItem = Omit<Task, 'extra_params'> & { extra_params: null };
+
+const TASK_LIST_COLUMNS = `
+    id, provider, provider_task_id, status, prompt, model, image_url, result_url,
+    error_message, NULL AS extra_params, retry_count, created_at, updated_at,
+    deleted_at, purged_at
+`;
+
 export interface InsertTaskParams {
     provider: string;
     prompt: string;
@@ -109,6 +117,14 @@ export function getAllTasks(): Task[] {
         .all() as Task[];
 }
 
+/** 获取轻量任务列表；刻意不从 SQLite 读取可能很大的工作流快照。 */
+export function getTaskList(): TaskListItem[] {
+    const db = getDb();
+    return db
+        .prepare(`SELECT ${TASK_LIST_COLUMNS} FROM tasks WHERE deleted_at IS NULL ORDER BY id DESC`)
+        .all() as TaskListItem[];
+}
+
 /** 软删除指定任务，返回是否成功 */
 export function deleteTask(id: number): boolean {
     const db = getDb();
@@ -161,6 +177,40 @@ export function filterTasks(filter: TaskFilter): Task[] {
     return db.prepare(sql).all(params) as Task[];
 }
 
+/** 筛选轻量任务列表；详情所需 extra_params 仅由单任务查询加载。 */
+export function filterTaskList(filter: TaskFilter): TaskListItem[] {
+    const db = getDb();
+    const conditions: string[] = ['deleted_at IS NULL'];
+    const params: Record<string, unknown> = {};
+
+    if (filter.providers && filter.providers.length > 0) {
+        const placeholders = filter.providers.map((_, i) => `@p${i}`);
+        conditions.push(`provider IN (${placeholders.join(', ')})`);
+        filter.providers.forEach((provider, i) => { params[`p${i}`] = provider; });
+    }
+    if (filter.statuses && filter.statuses.length > 0) {
+        const placeholders = filter.statuses.map((_, i) => `@s${i}`);
+        conditions.push(`status IN (${placeholders.join(', ')})`);
+        filter.statuses.forEach((status, i) => { params[`s${i}`] = status; });
+    }
+    if (filter.prompt) {
+        conditions.push('prompt LIKE @prompt');
+        params.prompt = `%${filter.prompt}%`;
+    }
+    if (filter.startDate) {
+        conditions.push('created_at >= @startDate');
+        params.startDate = filter.startDate;
+    }
+    if (filter.endDate) {
+        conditions.push('created_at <= @endDate');
+        params.endDate = filter.endDate;
+    }
+
+    return db.prepare(
+        `SELECT ${TASK_LIST_COLUMNS} FROM tasks WHERE ${conditions.join(' AND ')} ORDER BY id DESC`
+    ).all(params) as TaskListItem[];
+}
+
 /** 回收站筛选参数 */
 export interface TrashFilter {
     providers?: string[];
@@ -205,6 +255,40 @@ export function getDeletedTasks(filter?: TrashFilter): Task[] {
 
     const sql = `SELECT * FROM tasks WHERE ${conditions.join(' AND ')} ORDER BY deleted_at DESC`;
     return db.prepare(sql).all(params) as Task[];
+}
+
+/** 获取轻量回收站列表；刻意不从 SQLite 读取可能很大的工作流快照。 */
+export function getDeletedTaskList(filter?: TrashFilter): TaskListItem[] {
+    const db = getDb();
+    const conditions: string[] = ['deleted_at IS NOT NULL', 'purged_at IS NULL'];
+    const params: Record<string, unknown> = {};
+
+    if (filter?.providers && filter.providers.length > 0) {
+        const placeholders = filter.providers.map((_, i) => `@p${i}`);
+        conditions.push(`provider IN (${placeholders.join(', ')})`);
+        filter.providers.forEach((provider, i) => { params[`p${i}`] = provider; });
+    }
+    if (filter?.statuses && filter.statuses.length > 0) {
+        const placeholders = filter.statuses.map((_, i) => `@s${i}`);
+        conditions.push(`status IN (${placeholders.join(', ')})`);
+        filter.statuses.forEach((status, i) => { params[`s${i}`] = status; });
+    }
+    if (filter?.prompt) {
+        conditions.push('prompt LIKE @prompt');
+        params.prompt = `%${filter.prompt}%`;
+    }
+    if (filter?.deletedStartDate) {
+        conditions.push('deleted_at >= @deletedStartDate');
+        params.deletedStartDate = filter.deletedStartDate;
+    }
+    if (filter?.deletedEndDate) {
+        conditions.push('deleted_at <= @deletedEndDate');
+        params.deletedEndDate = filter.deletedEndDate;
+    }
+
+    return db.prepare(
+        `SELECT ${TASK_LIST_COLUMNS} FROM tasks WHERE ${conditions.join(' AND ')} ORDER BY deleted_at DESC`
+    ).all(params) as TaskListItem[];
 }
 
 /** 根据 id 获取回收站中的单条任务 */

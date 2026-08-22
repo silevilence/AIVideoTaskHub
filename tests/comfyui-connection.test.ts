@@ -204,7 +204,7 @@ describe('ComfyUI 连接与模板兼容性', () => {
         ]);
     });
 
-    it('模板在线检查跳过变量令牌的值类型但仍检查输入名称', async () => {
+    it('模板在线检查按变量声明类型校验令牌且仍检查输入名称', async () => {
         const result = await checkComfyWorkflowTemplateCompatibility(
             'http://127.0.0.1:8188',
             {
@@ -213,6 +213,11 @@ describe('ComfyUI 连接与模板兼容性', () => {
                     inputs: { steps: '${steps}', enabled: '${enabled}', unknown: '${value}' },
                 },
             },
+            [
+                { key: 'steps', label: '步数', type: 'integer' },
+                { key: 'enabled', label: '启用', type: 'boolean' },
+                { key: 'value', label: '未知', type: 'string' },
+            ],
             vi.fn(async () => new Response(JSON.stringify({
                 KSampler: {
                     input: {
@@ -224,6 +229,48 @@ describe('ComfyUI 连接与模板兼容性', () => {
 
         expect(result.incompatibleInputs).toEqual([
             { nodeId: '3', classType: 'KSampler', input: 'unknown' },
+        ]);
+    });
+
+    it('模板在线检查报告字符串插值接入整数及选项集合不兼容', async () => {
+        const result = await checkComfyWorkflowTemplateCompatibility(
+            'http://127.0.0.1:8188',
+            {
+                '3': {
+                    class_type: 'KSampler',
+                    inputs: {
+                        steps: 'prefix ${name}',
+                        sampler_name: '${sampler}',
+                    },
+                },
+            },
+            [
+                { key: 'name', label: '名称', type: 'string' },
+                {
+                    key: 'sampler',
+                    label: '采样器',
+                    type: 'option',
+                    options: [
+                        { label: 'Euler', value: 'euler' },
+                        { label: '未知', value: 'unavailable' },
+                    ],
+                },
+            ],
+            vi.fn(async () => new Response(JSON.stringify({
+                KSampler: {
+                    input: {
+                        required: {
+                            steps: ['INT', {}],
+                            sampler_name: [['euler', 'dpmpp_2m'], {}],
+                        },
+                    },
+                },
+            }), { status: 200 }))
+        );
+
+        expect(result.incompatibleInputs).toEqual([
+            expect.objectContaining({ nodeId: '3', input: 'steps', reason: '模板插值结果为字符串，必须是整数' }),
+            expect.objectContaining({ nodeId: '3', input: 'sampler_name', reason: '变量选项包含 ComfyUI 未声明的值：unavailable' }),
         ]);
     });
 

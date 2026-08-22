@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 
 const componentModulePath = '../src/web/src/components/CreateTaskForm';
@@ -18,6 +18,12 @@ function jsonResponse(value: unknown, status = 200): Response {
         status,
         headers: { 'Content-Type': 'application/json' },
     });
+}
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => { resolve = done; });
+    return { promise, resolve };
 }
 
 const settings = {
@@ -313,5 +319,71 @@ describe('创建 ComfyUI 任务', () => {
 
         expect((await screen.findByLabelText('历史提示词') as HTMLInputElement).value).toBe('完整值');
         expect(fetch).toHaveBeenCalledWith('/api/tasks/9');
+    });
+
+    it('连续套用两个轻量任务时忽略较晚返回的旧请求', async () => {
+        const makeTask = (id: number, prompt: string) => ({
+            id,
+            provider: 'comfyui',
+            provider_task_id: `remote-${id}`,
+            status: 'failed',
+            prompt,
+            model: `deleted-${id}`,
+            image_url: null,
+            result_url: null,
+            error_message: 'failed',
+            extra_params: null,
+            retry_count: 0,
+            created_at: '2026-08-22 00:00:00',
+            updated_at: '2026-08-22 00:00:00',
+            deleted_at: null,
+            purged_at: null,
+        });
+        const tasks = [makeTask(1, '先请求'), makeTask(2, '后请求')];
+        const makeDetail = (task: typeof tasks[number], value: string) => ({
+            ...task,
+            extra_params: JSON.stringify({ snapshotVersion: 1 }),
+            comfyui_snapshot: {
+                templateId: task.model,
+                templateName: `模板${task.id}`,
+                baseUrl: 'http://history-comfy:8188',
+                primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+                parameterSchema: {
+                    kind: 'comfyui-workflow',
+                    variables: [{ key: 'prompt', label: '历史提示词', type: 'string' }],
+                    primaryDescription: 'prompt',
+                    primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+                },
+                variables: [{ key: 'prompt', label: '历史提示词', type: 'string', value }],
+                images: [],
+            },
+        });
+        const first = deferred<Response>();
+        const second = deferred<Response>();
+        vi.mocked(fetch).mockImplementation(async (input) => {
+            const url = String(input);
+            if (url.endsWith('/api/providers/models')) return jsonResponse({ comfyui: [] });
+            if (url.endsWith('/api/providers')) return jsonResponse([{ name: 'comfyui', displayName: 'ComfyUI' }]);
+            if (url.endsWith('/api/settings')) return jsonResponse(settings);
+            if (url.endsWith('/api/tasks')) return jsonResponse(tasks);
+            if (url.endsWith('/api/trash')) return jsonResponse([]);
+            if (url.endsWith('/api/tasks/1')) return first.promise;
+            if (url.endsWith('/api/tasks/2')) return second.promise;
+            throw new Error(`未模拟请求：${url}`);
+        });
+        const user = userEvent.setup();
+        await renderTaskForm({ onCreated: vi.fn() });
+
+        await user.click(await screen.findByRole('button', { name: '套用参数' }));
+        await screen.findByText('先请求');
+        await user.click(screen.getAllByRole('button', { name: '套用' })[0]);
+        await user.click(screen.getByRole('button', { name: '套用' }));
+        await act(async () => second.resolve(jsonResponse(makeDetail(tasks[1], '后值'))));
+        expect((await screen.findByLabelText('历史提示词') as HTMLInputElement).value).toBe('后值');
+
+        await act(async () => first.resolve(jsonResponse(makeDetail(tasks[0], '先值'))));
+        await waitFor(() => {
+            expect((screen.getByLabelText('历史提示词') as HTMLInputElement).value).toBe('后值');
+        });
     });
 });

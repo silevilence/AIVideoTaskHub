@@ -86,6 +86,23 @@ export function CreateTaskForm({
     const [applyModalLoading, setApplyModalLoading] = useState(false);
     const [applyPreviewTask, setApplyPreviewTask] = useState<Task | TrashTask | null>(null);
     const [applyParamsTask, setApplyParamsTask] = useState<Task | TrashTask | null>(null);
+    const [applyingTaskId, setApplyingTaskId] = useState<number | null>(null);
+    const [paramsLoadingTaskId, setParamsLoadingTaskId] = useState<number | null>(null);
+    const applyRequestId = useRef(0);
+    const paramsRequestId = useRef(0);
+
+    const closeApplyModal = () => {
+        applyRequestId.current += 1;
+        paramsRequestId.current += 1;
+        setApplyingTaskId(null);
+        setParamsLoadingTaskId(null);
+        setApplyModalOpen(false);
+    };
+
+    useEffect(() => () => {
+        applyRequestId.current += 1;
+        paramsRequestId.current += 1;
+    }, []);
 
     // 已上传图片选择弹窗状态
     const [uploadedImagesModalOpen, setUploadedImagesModalOpen] = useState(false);
@@ -1353,12 +1370,15 @@ export function CreateTaskForm({
                     tasks={applyTasks}
                     trashTasks={applyTrashTasks}
                     loading={applyModalLoading}
-                    onClose={() => setApplyModalOpen(false)}
+                    onClose={closeApplyModal}
                     onApply={async (task) => {
+                        const requestId = ++applyRequestId.current;
+                        setApplyingTaskId(task.id);
                         try {
                             const detailed = task.deleted_at
                                 ? await fetchTrashTask(task.id)
                                 : await fetchTask(task.id);
+                            if (requestId !== applyRequestId.current) return;
                             const params: ApplyParams = {
                                 sourceTaskId: detailed.id,
                                 provider: detailed.provider,
@@ -1369,21 +1389,30 @@ export function CreateTaskForm({
                                 comfyuiSnapshot: detailed.comfyui_snapshot,
                             };
                             applyParamsToForm(params);
-                            setApplyModalOpen(false);
+                            closeApplyModal();
                         } catch (err) {
-                            setError((err as Error).message);
+                            if (requestId === applyRequestId.current) setError((err as Error).message);
+                        } finally {
+                            if (requestId === applyRequestId.current) setApplyingTaskId(null);
                         }
                     }}
                     onPreview={setApplyPreviewTask}
                     onShowParams={async (task) => {
+                        const requestId = ++paramsRequestId.current;
+                        setParamsLoadingTaskId(task.id);
                         try {
-                            setApplyParamsTask(task.deleted_at
+                            const detail = task.deleted_at
                                 ? await fetchTrashTask(task.id)
-                                : await fetchTask(task.id));
+                                : await fetchTask(task.id);
+                            if (requestId === paramsRequestId.current) setApplyParamsTask(detail);
                         } catch (err) {
-                            setError((err as Error).message);
+                            if (requestId === paramsRequestId.current) setError((err as Error).message);
+                        } finally {
+                            if (requestId === paramsRequestId.current) setParamsLoadingTaskId(null);
                         }
                     }}
+                    applyingTaskId={applyingTaskId}
+                    paramsLoadingTaskId={paramsLoadingTaskId}
                     providerInfos={providerInfos}
                     modelDisplayNames={Object.fromEntries(
                         Object.values(providerModels).flat().map(m => [m.id, m.displayName])
@@ -1512,6 +1541,8 @@ function ApplyParamsModal({
     onApply,
     onPreview,
     onShowParams,
+    applyingTaskId,
+    paramsLoadingTaskId,
     providerInfos,
     modelDisplayNames,
 }: {
@@ -1524,6 +1555,8 @@ function ApplyParamsModal({
     onApply: (task: Task | TrashTask) => void;
     onPreview: (task: Task | TrashTask) => void;
     onShowParams: (task: Task | TrashTask) => void;
+    applyingTaskId: number | null;
+    paramsLoadingTaskId: number | null;
     providerInfos: ProviderInfo[];
     modelDisplayNames: Record<string, string>;
 }) {
@@ -1633,6 +1666,7 @@ function ApplyParamsModal({
                                                 variant="ghost"
                                                 size="sm"
                                                 onClick={() => onShowParams(task)}
+                                                disabled={paramsLoadingTaskId === task.id}
                                                 className="text-muted-foreground"
                                             >
                                                 <Info className="h-3.5 w-3.5" />
@@ -1641,8 +1675,9 @@ function ApplyParamsModal({
                                                 variant="default"
                                                 size="sm"
                                                 onClick={() => onApply(task)}
+                                                disabled={applyingTaskId === task.id}
                                             >
-                                                套用
+                                                {applyingTaskId === task.id ? '套用中…' : '套用'}
                                             </Button>
                                         </div>
                                     </div>

@@ -9,6 +9,7 @@ import {
     deleteTask,
     updateTaskStatus,
     getDeletedTasks,
+    getDeletedTaskList,
     getDeletedTaskById,
     purgeTask,
     getTaskById,
@@ -27,6 +28,18 @@ describe('回收站 Model 操作', () => {
     });
 
     describe('getDeletedTasks', () => {
+        it('轻量回收站列表不读取 extra_params', () => {
+            const task = insertTask({
+                provider: 'comfyui',
+                prompt: '快照',
+                extraParams: { templateDocument: 'x'.repeat(10_000) },
+            });
+            deleteTask(task.id);
+
+            expect(getDeletedTaskList()[0]).toMatchObject({ id: task.id, extra_params: null });
+            expect(getDeletedTaskById(task.id)?.extra_params).toContain('templateDocument');
+        });
+
         it('应返回所有软删除且未彻底删除的任务', () => {
             const t1 = insertTask({ provider: 'mock', prompt: '任务1' });
             const t2 = insertTask({ provider: 'mock', prompt: '任务2' });

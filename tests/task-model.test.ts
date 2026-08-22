@@ -6,6 +6,8 @@ import {
     getTaskById,
     updateTaskStatus,
     getRunningTasks,
+    getTaskList,
+    filterTaskList,
 } from '../src/server/task-model.js';
 
 describe('数据库初始化', () => {
@@ -187,6 +189,23 @@ describe('Task CRUD 操作', () => {
         it('没有活跃任务时应返回空数组', () => {
             const running = getRunningTasks();
             expect(running).toHaveLength(0);
+        });
+    });
+
+    describe('轻量任务列表', () => {
+        it('列表投影不读取 extra_params，详情仍保留完整参数', () => {
+            const task = insertTask({
+                provider: 'comfyui',
+                prompt: 'snapshot',
+                extraParams: { templateDocument: 'x'.repeat(10_000) },
+            });
+
+            expect(getTaskList()[0]).toMatchObject({ id: task.id, extra_params: null });
+            expect(filterTaskList({ providers: ['comfyui'] })[0]).toMatchObject({
+                id: task.id,
+                extra_params: null,
+            });
+            expect(getTaskById(task.id)?.extra_params).toContain('templateDocument');
         });
     });
 });

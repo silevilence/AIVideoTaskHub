@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Task, TaskFilter, ProviderInfo, ApplyParams } from '../api';
 import { fetchTask, fetchTasks, fetchProviders, fetchProviderModels, retryTask, deleteTask } from '../api';
 import { Button } from './ui/button';
@@ -50,8 +50,14 @@ export function TaskList({ refreshKey, onApplyParams }: { refreshKey: number; on
     const [modelDisplayNames, setModelDisplayNames] = useState<Record<string, string>>({});
     const [previewTask, setPreviewTask] = useState<Task | null>(null);
     const [paramsTask, setParamsTask] = useState<Task | null>(null);
+    const [paramsLoadingId, setParamsLoadingId] = useState<number | null>(null);
+    const paramsRequestId = useRef(0);
     const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
     const [alertMessage, setAlertMessage] = useState<string | null>(null);
+
+    useEffect(() => () => {
+        paramsRequestId.current += 1;
+    }, []);
 
     // Filter state
     const [filterOpen, setFilterOpen] = useState(false);
@@ -124,10 +130,15 @@ export function TaskList({ refreshKey, onApplyParams }: { refreshKey: number; on
     };
 
     const handleShowParams = async (task: Task) => {
+        const requestId = ++paramsRequestId.current;
+        setParamsLoadingId(task.id);
         try {
-            setParamsTask(await fetchTask(task.id));
+            const detail = await fetchTask(task.id);
+            if (requestId === paramsRequestId.current) setParamsTask(detail);
         } catch (err) {
-            setAlertMessage((err as Error).message);
+            if (requestId === paramsRequestId.current) setAlertMessage((err as Error).message);
+        } finally {
+            if (requestId === paramsRequestId.current) setParamsLoadingId(null);
         }
     };
 
@@ -325,6 +336,7 @@ export function TaskList({ refreshKey, onApplyParams }: { refreshKey: number; on
                             onDelete={handleDeleteRequest}
                             onPreview={setPreviewTask}
                             onShowParams={handleShowParams}
+                            paramsLoading={paramsLoadingId === task.id}
                             providerDisplayName={providerDisplayName}
                             modelDisplayNames={modelDisplayNames}
                         />
@@ -346,7 +358,11 @@ export function TaskList({ refreshKey, onApplyParams }: { refreshKey: number; on
             {paramsTask && (
                 <TaskParamsModal
                     task={paramsTask}
-                    onClose={() => setParamsTask(null)}
+                    onClose={() => {
+                        paramsRequestId.current += 1;
+                        setParamsLoadingId(null);
+                        setParamsTask(null);
+                    }}
                     onApplyParams={onApplyParams}
                     providerDisplayName={providerDisplayName}
                     modelDisplayNames={modelDisplayNames}
@@ -383,6 +399,7 @@ function TaskCard({
     onDelete,
     onPreview,
     onShowParams,
+    paramsLoading,
     providerDisplayName,
     modelDisplayNames,
 }: {
@@ -391,6 +408,7 @@ function TaskCard({
     onDelete: (id: number) => void;
     onPreview: (task: Task) => void;
     onShowParams: (task: Task) => void;
+    paramsLoading: boolean;
     providerDisplayName: (name: string) => string;
     modelDisplayNames: Record<string, string>;
 }) {
@@ -479,10 +497,13 @@ function TaskCard({
                             variant="ghost"
                             size="sm"
                             onClick={() => onShowParams(task)}
+                            disabled={paramsLoading}
                             className="text-muted-foreground"
                             title="查看任务参数"
                         >
-                            <Info className="h-3.5 w-3.5" />
+                            {paramsLoading
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <Info className="h-3.5 w-3.5" />}
                         </Button>
                     </div>
                 </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { TrashTask, TrashFilter, ProviderInfo, ApplyParams } from '../api';
 import { fetchTrashTask, fetchTrashTasks, fetchProviders, fetchProviderModels, purgeTask, restoreTask } from '../api';
 import { Button } from './ui/button';
@@ -185,15 +185,26 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
     const [modelDisplayNames, setModelDisplayNames] = useState<Record<string, string>>({});
     const [previewTask, setPreviewTask] = useState<TrashTask | null>(null);
     const [paramsTask, setParamsTask] = useState<TrashTask | null>(null);
+    const [paramsLoadingId, setParamsLoadingId] = useState<number | null>(null);
+    const paramsRequestId = useRef(0);
     const [purgeStep, setPurgeStep] = useState<'idle' | 'confirm1' | 'confirm2'>('idle');
     const [purgeTarget, setPurgeTarget] = useState<TrashTask | null>(null);
     const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
+    useEffect(() => () => {
+        paramsRequestId.current += 1;
+    }, []);
+
     const handleShowParams = async (task: TrashTask) => {
+        const requestId = ++paramsRequestId.current;
+        setParamsLoadingId(task.id);
         try {
-            setParamsTask(await fetchTrashTask(task.id));
+            const detail = await fetchTrashTask(task.id);
+            if (requestId === paramsRequestId.current) setParamsTask(detail);
         } catch (err) {
-            setAlertMessage((err as Error).message);
+            if (requestId === paramsRequestId.current) setAlertMessage((err as Error).message);
+        } finally {
+            if (requestId === paramsRequestId.current) setParamsLoadingId(null);
         }
     };
 
@@ -476,6 +487,7 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
                             onRestore={handleRestore}
                             onPreview={setPreviewTask}
                             onShowParams={handleShowParams}
+                            paramsLoading={paramsLoadingId === task.id}
                             providerDisplayName={providerDisplayName}
                             modelDisplayNames={modelDisplayNames}
                         />
@@ -497,7 +509,11 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
             {paramsTask && (
                 <TrashParamsModal
                     task={paramsTask}
-                    onClose={() => setParamsTask(null)}
+                    onClose={() => {
+                        paramsRequestId.current += 1;
+                        setParamsLoadingId(null);
+                        setParamsTask(null);
+                    }}
                     onApplyParams={onApplyParams}
                     providerDisplayName={providerDisplayName}
                     modelDisplayNames={modelDisplayNames}
@@ -546,6 +562,7 @@ function TrashTaskCard({
     onRestore,
     onPreview,
     onShowParams,
+    paramsLoading,
     providerDisplayName,
     modelDisplayNames,
 }: {
@@ -554,6 +571,7 @@ function TrashTaskCard({
     onRestore: (task: TrashTask) => void;
     onPreview: (task: TrashTask) => void;
     onShowParams: (task: TrashTask) => void;
+    paramsLoading: boolean;
     providerDisplayName: (name: string) => string;
     modelDisplayNames: Record<string, string>;
 }) {
@@ -652,10 +670,13 @@ function TrashTaskCard({
                             variant="ghost"
                             size="sm"
                             onClick={() => onShowParams(task)}
+                            disabled={paramsLoading}
                             className="text-muted-foreground"
                             title="查看任务参数"
                         >
-                            <Info className="h-3.5 w-3.5" />
+                            {paramsLoading
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <Info className="h-3.5 w-3.5" />}
                         </Button>
                     </div>
                 </div>

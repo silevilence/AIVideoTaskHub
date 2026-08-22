@@ -11,7 +11,10 @@ import { isIP } from 'node:net';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { ComfyApiWorkflow } from './comfy-workflow-template.js';
+import type {
+    ComfyApiWorkflow,
+    WorkflowTemplateVariable,
+} from './comfy-workflow-template.js';
 
 interface ComfyObjectInfoNode {
     input?: {
@@ -576,7 +579,7 @@ export async function checkComfyWorkflowCompatibility(
     fetcher: typeof fetch = fetch,
     resolver: ComfyDnsResolver = defaultDnsResolver,
     safeTarget?: SafeHttpTarget,
-    options: { skipTemplateVariableValues?: boolean } = {}
+    options: { templateVariables?: WorkflowTemplateVariable[] } = {}
 ): Promise<ComfyCompatibilityResult> {
     const baseUrl = normalizeComfyUiBaseUrl(value);
     if (safeTarget && new URL(baseUrl).origin !== safeTarget.origin) {
@@ -589,6 +592,9 @@ export async function checkComfyWorkflowCompatibility(
     const missingNodeTypes = new Set<string>();
     const missingRequiredInputs: ComfyIncompatibleInput[] = [];
     const incompatibleInputs: ComfyIncompatibleInput[] = [];
+    const templateVariables = options.templateVariables
+        ? new Map(options.templateVariables.map((variable) => [variable.key, variable]))
+        : undefined;
 
     for (const [nodeId, node] of Object.entries(workflow)) {
         const nodeInfo = Object.hasOwn(objectInfo, node.class_type)
@@ -616,11 +622,12 @@ export async function checkComfyWorkflowCompatibility(
                 continue;
             }
             const inputValue = node.inputs[input];
-            const isTemplateValue = options.skipTemplateVariableValues
-                && typeof inputValue === 'string'
-                && /\$\{[A-Za-z_][A-Za-z0-9_]*\}/.test(inputValue);
-            const reason = isTemplateValue
-                ? undefined
+            const reason = templateVariables
+                ? recognizableTemplateInputIssue(
+                    descriptors[input],
+                    inputValue,
+                    templateVariables
+                )
                 : recognizableInputIssue(descriptors[input], inputValue);
             if (reason) {
                 incompatibleInputs.push({ nodeId, classType: node.class_type, input, reason });
@@ -645,6 +652,7 @@ export async function checkComfyWorkflowCompatibility(
 export function checkComfyWorkflowTemplateCompatibility(
     value: string,
     workflow: ComfyApiWorkflow,
+    variables: WorkflowTemplateVariable[],
     fetcher: typeof fetch = fetch,
     resolver: ComfyDnsResolver = defaultDnsResolver,
     safeTarget?: SafeHttpTarget
@@ -655,7 +663,7 @@ export function checkComfyWorkflowTemplateCompatibility(
         fetcher,
         resolver,
         safeTarget,
-        { skipTemplateVariableValues: true }
+        { templateVariables: variables }
     );
 }
 
@@ -664,6 +672,57 @@ function isNodeConnection(value: unknown): boolean {
         && value.length === 2
         && typeof value[0] === 'string'
         && Number.isInteger(value[1]);
+}
+
+const FULL_TEMPLATE_TOKEN_PATTERN = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+const TEMPLATE_TOKEN_PATTERN = /\$\{[A-Za-z_][A-Za-z0-9_]*\}/;
+
+function recognizableTemplateInputIssue(
+    descriptor: unknown,
+    value: unknown,
+    variables: Map<string, WorkflowTemplateVariable>
+): string | undefined {
+    if (typeof value !== 'string' || !TEMPLATE_TOKEN_PATTERN.test(value)) {
+        return recognizableInputIssue(descriptor, value);
+    }
+    const fullToken = value.match(FULL_TEMPLATE_TOKEN_PATTERN);
+    if (!fullToken) {
+        const issue = recognizableInputIssue(descriptor, '__template_string__');
+        return issue ? `模板插值结果为字符串，${issue}` : undefined;
+    }
+    const variable = variables.get(fullToken[1]);
+    if (!variable || !Array.isArray(descriptor) || descriptor.length === 0) return undefined;
+    const declaredType = descriptor[0];
+    const config = isRecord(descriptor[1]) ? descriptor[1] : {};
+    const options = Array.isArray(declaredType)
+        ? declaredType
+        : declaredType === 'COMBO' && Array.isArray(config.options) ? config.options : undefined;
+    if (options) {
+        if (variable.type !== 'option') return '变量类型与 ComfyUI 选项输入不兼容';
+        const unsupported = variable.options
+            ?.map((option) => option.value)
+            .filter((option) => !options.some((allowed) => Object.is(allowed, option))) ?? [];
+        return unsupported.length > 0
+            ? `变量选项包含 ComfyUI 未声明的值：${unsupported.join('、')}`
+            : undefined;
+    }
+    if (declaredType === 'INT') {
+        return variable.type === 'integer' ? undefined : '变量类型与 ComfyUI 整数输入不兼容';
+    }
+    if (declaredType === 'FLOAT') {
+        return variable.type === 'integer' || variable.type === 'number'
+            ? undefined
+            : '变量类型与 ComfyUI 数值输入不兼容';
+    }
+    if (declaredType === 'STRING') {
+        return variable.type === 'string' || variable.type === 'option' || variable.type === 'image'
+            ? undefined
+            : '变量类型与 ComfyUI 字符串输入不兼容';
+    }
+    if (declaredType === 'BOOLEAN') {
+        return variable.type === 'boolean' ? undefined : '变量类型与 ComfyUI 布尔输入不兼容';
+    }
+    return undefined;
 }
 
 function recognizableInputIssue(descriptor: unknown, value: unknown): string | undefined {

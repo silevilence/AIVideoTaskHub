@@ -7,13 +7,13 @@ import type { McpServerManager } from './mcp/mcp-server.js';
 import {
     insertTask,
     getTaskById,
-    getAllTasks,
+    getTaskList,
     deleteTask,
     updateTaskStatus,
     getSetting,
     setSetting,
-    filterTasks,
-    getDeletedTasks,
+    filterTaskList,
+    getDeletedTaskList,
     getDeletedTaskById,
     purgeTask,
     resetTaskForRetry,
@@ -60,12 +60,6 @@ import {
     type CreatePromptParams,
     type UpdatePromptParams,
 } from './prompt-model.js';
-
-function toTaskListItem<T extends { extra_params: string | null }>(
-    task: T
-): Omit<T, 'extra_params'> & { extra_params: null } {
-    return { ...task, extra_params: null };
-}
 
 export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpServerManager): Router {
     const router = Router();
@@ -355,9 +349,9 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
                 startDate: typeof startDate === 'string' ? startDate : undefined,
                 endDate: typeof endDate === 'string' ? endDate : undefined,
             };
-            res.json(filterTasks(filter).map(toTaskListItem));
+            res.json(filterTaskList(filter));
         } else {
-            res.json(getAllTasks().map(toTaskListItem));
+            res.json(getTaskList());
         }
     });
 
@@ -456,7 +450,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
             deletedEndDate: typeof deletedEndDate === 'string' ? deletedEndDate : undefined,
         } : undefined;
 
-        const tasks = getDeletedTasks(filter);
+        const tasks = getDeletedTaskList(filter);
         const dataDir = process.env.DATA_DIR || 'data';
 
         const tasksWithSize = tasks.map((task) => {
@@ -477,7 +471,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
                     fileSize += stat.size;
                 } catch { /* 文件不存在 */ }
             }
-            return { ...toTaskListItem(task), file_size: fileSize };
+            return { ...task, file_size: fileSize };
         });
 
         res.json(tasksWithSize);

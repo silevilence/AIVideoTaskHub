@@ -259,7 +259,8 @@ export function createComfyUiRouter(registry?: ProviderRegistry): Router {
         try {
             res.json(await checkComfyWorkflowTemplateCompatibility(
                 baseUrl,
-                validation.template.workflow
+                validation.template.workflow,
+                validation.template.metadata.variables
             ));
         } catch (error) {
             res.status(502).json({ error: databaseErrorMessage(error) });
