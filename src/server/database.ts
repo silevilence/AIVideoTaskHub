@@ -68,6 +68,17 @@ export function initDb(dbPath: string = process.env.DB_PATH || DEFAULT_DB_PATH):
         );
     `);
 
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS comfy_workflow_templates (
+            id         TEXT    PRIMARY KEY,
+            name       TEXT    NOT NULL COLLATE NOCASE UNIQUE,
+            document   TEXT    NOT NULL,
+            enabled    INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+    `);
+
     // 为已有的数据库添加 deleted_at 字段
     const columns = db.pragma('table_info(tasks)') as { name: string }[];
     if (!columns.some((c) => c.name === 'deleted_at')) {
