@@ -151,6 +151,9 @@ export interface VideoProvider {
     /** 在任务写入本地数据库前校验并生成 Provider 专属参数快照 */
     prepareTask?(params: CreateTaskParams): Promise<CreateTaskParams> | CreateTaskParams;
 
+    /** 重试前基于持久化快照重新验证并按需刷新连接信息 */
+    prepareRetry?(params: CreateTaskParams): Promise<CreateTaskParams> | CreateTaskParams;
+
     /** 查询平台侧任务的最新状态 */
     getStatus(providerTaskId: string, context?: ProviderTaskContext): Promise<TaskStatusResult>;
 

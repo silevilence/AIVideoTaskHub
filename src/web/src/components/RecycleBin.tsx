@@ -7,6 +7,7 @@ import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { ConfirmDialog, AlertDialog } from './ui/dialog';
+import { ComfyTaskSnapshotDetails } from './ComfyTaskSnapshotDetails';
 import { cn } from '../lib/utils';
 import {
     Clock,
@@ -682,11 +683,13 @@ function TrashParamsModal({
     const handleApply = () => {
         if (!onApplyParams) return;
         onApplyParams({
+            sourceTaskId: task.id,
             provider: task.provider,
             model: task.model,
             prompt: task.prompt,
             imageUrl: task.image_url,
             extraParams: params,
+            comfyuiSnapshot: task.comfyui_snapshot,
         });
         onClose();
     };
@@ -766,6 +769,12 @@ function TrashParamsModal({
                         </div>
                     )}
                 </div>
+
+                {task.comfyui_snapshot && (
+                    <div className="px-5 pt-3">
+                        <ComfyTaskSnapshotDetails snapshot={task.comfyui_snapshot} />
+                    </div>
+                )}
 
                 {/* 额外参数 */}
                 {entries.length > 0 && (

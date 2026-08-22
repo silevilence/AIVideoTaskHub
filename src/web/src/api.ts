@@ -14,6 +14,22 @@ export interface Task {
     updated_at: string;
     deleted_at: string | null;
     purged_at: string | null;
+    comfyui_snapshot?: ComfyTaskSnapshotView;
+}
+
+export interface ComfyTaskSnapshotView {
+    templateId: string;
+    templateName: string;
+    baseUrl: string;
+    primaryOutput: { nodeId: string; field: string; index: number };
+    parameterSchema: ModelParameterSchema;
+    variables: Array<{
+        key: string;
+        label: string;
+        type: string;
+        value: unknown;
+    }>;
+    images: Array<Record<string, unknown> & { variableKey: string; source: string }>;
 }
 
 const BASE = '/api';
@@ -263,11 +279,13 @@ export async function fetchUploadedImages(): Promise<UploadedImage[]> {
 // ── 参数套用相关类型 ──────────────────────────
 
 export interface ApplyParams {
+    sourceTaskId?: number;
     provider: string;
     model: string | null;
     prompt: string;
     imageUrl: string | null;
     extraParams: Record<string, unknown>;
+    comfyuiSnapshot?: ComfyTaskSnapshotView;
 }
 
 // ── 文本设置相关 ──────────────────────────

@@ -27,8 +27,8 @@ export interface InsertTaskParams {
 }
 
 export interface UpdateStatusExtras {
-    providerTaskId?: string;
-    resultUrl?: string;
+    providerTaskId?: string | null;
+    resultUrl?: string | null;
     errorMessage?: string;
     incrementRetry?: boolean;
 }
@@ -219,6 +219,51 @@ export interface PurgeResult {
     success: boolean;
     error?: string;
     filesToDelete?: string[];
+}
+
+/** 根据 id 获取仍保留的任务（包括回收站任务，但排除已彻底删除任务）。 */
+export function getTaskByIdIncludingDeleted(id: number): Task | undefined {
+    const db = getDb();
+    return db
+        .prepare('SELECT * FROM tasks WHERE id = ? AND purged_at IS NULL')
+        .get(id) as Task | undefined;
+}
+
+export function resetTaskForRetry(
+    expected: Task,
+    extraParams?: Record<string, unknown>
+): boolean {
+    const db = getDb();
+    const result = db.prepare(`
+        UPDATE tasks
+        SET status = 'pending',
+            provider_task_id = NULL,
+            result_url = NULL,
+            error_message = '',
+            extra_params = COALESCE(@extraParams, extra_params),
+            updated_at = datetime('now')
+        WHERE id = @id
+          AND status = @expectedStatus
+          AND provider_task_id IS @expectedProviderTaskId
+          AND result_url IS @expectedResultUrl
+          AND error_message IS @expectedErrorMessage
+          AND extra_params IS @expectedExtraParams
+          AND retry_count = @expectedRetryCount
+          AND updated_at = @expectedUpdatedAt
+          AND deleted_at IS NULL
+          AND purged_at IS NULL
+    `).run({
+        id: expected.id,
+        extraParams: extraParams ? JSON.stringify(extraParams) : null,
+        expectedStatus: expected.status,
+        expectedProviderTaskId: expected.provider_task_id,
+        expectedResultUrl: expected.result_url,
+        expectedErrorMessage: expected.error_message,
+        expectedExtraParams: expected.extra_params,
+        expectedRetryCount: expected.retry_count,
+        expectedUpdatedAt: expected.updated_at,
+    });
+    return result.changes === 1;
 }
 
 function extractExtraImageSources(value: unknown): string[] {

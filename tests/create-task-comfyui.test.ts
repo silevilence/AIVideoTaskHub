@@ -110,4 +110,151 @@ describe('创建 ComfyUI 任务', () => {
             },
         });
     });
+
+    it('原模板删除后仍能从历史快照恢复字段并创建等价任务', async () => {
+        const sourceSnapshot = {
+            snapshotVersion: 1,
+            templateId: 'deleted-workflow',
+            templateName: '已删除模板',
+            templateDocument: 'historical-document',
+            comfyuiBaseUrl: 'http://history-comfy:8188',
+            workflowInputs: { prompt: '历史云海', steps: 36 },
+            workflow: {},
+            primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+        };
+        const comfyuiSnapshot = {
+            templateId: 'deleted-workflow',
+            templateName: '已删除模板',
+            baseUrl: 'http://history-comfy:8188',
+            primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+            parameterSchema: {
+                kind: 'comfyui-workflow' as const,
+                variables: [
+                    { key: 'prompt', label: '画面描述', type: 'string' as const, multiline: true },
+                    { key: 'steps', label: '步数', type: 'integer' as const, default: 24 },
+                ],
+                primaryDescription: 'prompt',
+                primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+            },
+            variables: [
+                { key: 'prompt', label: '画面描述', type: 'string', value: '历史云海' },
+                { key: 'steps', label: '步数', type: 'integer', value: 36 },
+            ],
+            images: [],
+        };
+        let submitted: Record<string, unknown> | undefined;
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const url = String(input);
+            if (url.endsWith('/api/providers/models')) return jsonResponse({ comfyui: [] });
+            if (url.endsWith('/api/providers')) return jsonResponse([{ name: 'comfyui', displayName: 'ComfyUI' }]);
+            if (url.endsWith('/api/settings')) return jsonResponse(settings);
+            if (url.endsWith('/api/tasks')) {
+                submitted = JSON.parse(String(init?.body));
+                return jsonResponse({ id: 2 }, 201);
+            }
+            throw new Error(`未模拟请求：${url}`);
+        });
+        const onCreated = vi.fn();
+
+        await renderTaskForm({
+            onCreated,
+            onApplyParamsConsumed: vi.fn(),
+            applyParams: {
+                sourceTaskId: 42,
+                provider: 'comfyui',
+                model: 'deleted-workflow',
+                prompt: '历史云海',
+                imageUrl: null,
+                extraParams: sourceSnapshot,
+                comfyuiSnapshot,
+            },
+        });
+
+        expect((await screen.findByLabelText('画面描述') as HTMLTextAreaElement).value).toBe('历史云海');
+        expect((screen.getByLabelText('步数') as HTMLInputElement).value).toBe('36');
+        expect((screen.getByLabelText('本次 ComfyUI 地址') as HTMLInputElement).value).toBe(
+            'http://history-comfy:8188'
+        );
+        await userEvent.setup().click(screen.getByRole('button', { name: '创建任务' }));
+
+        await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+        expect(submitted).toMatchObject({
+            provider: 'comfyui',
+            model: 'deleted-workflow',
+            extra: {
+                workflowInputs: { prompt: '历史云海', steps: 36 },
+                comfyuiBaseUrl: 'http://history-comfy:8188',
+                sourceTaskId: 42,
+            },
+        });
+    });
+
+    it('同 ID 模板已编辑时仍优先使用历史 schema', async () => {
+        const comfyuiSnapshot = {
+            templateId: 'workflow-1',
+            templateName: '历史模板',
+            baseUrl: 'http://history-comfy:8188',
+            primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+            parameterSchema: {
+                kind: 'comfyui-workflow' as const,
+                variables: [{ key: 'old_prompt', label: '历史画面描述', type: 'string' as const }],
+                primaryDescription: 'old_prompt',
+                primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+            },
+            variables: [{ key: 'old_prompt', label: '历史画面描述', type: 'string', value: '旧值' }],
+            images: [],
+        };
+        let submitted: Record<string, unknown> | undefined;
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+            const url = String(input);
+            if (url.endsWith('/api/providers/models')) {
+                return jsonResponse({
+                    comfyui: [{
+                        id: 'workflow-1',
+                        displayName: '当前模板',
+                        parameterSchema: {
+                            kind: 'comfyui-workflow',
+                            variables: [{ key: 'new_prompt', label: '新版画面描述', type: 'string' }],
+                            primaryDescription: 'new_prompt',
+                            primaryOutput: { nodeId: '9', field: 'videos', index: 0 },
+                        },
+                    }],
+                });
+            }
+            if (url.endsWith('/api/providers')) return jsonResponse([{ name: 'comfyui', displayName: 'ComfyUI' }]);
+            if (url.endsWith('/api/settings')) return jsonResponse(settings);
+            if (url.endsWith('/api/tasks')) {
+                submitted = JSON.parse(String(init?.body));
+                return jsonResponse({ id: 3 }, 201);
+            }
+            throw new Error(`未模拟请求：${url}`);
+        });
+
+        await renderTaskForm({
+            onCreated: vi.fn(),
+            onApplyParamsConsumed: vi.fn(),
+            applyParams: {
+                sourceTaskId: 77,
+                provider: 'comfyui',
+                model: 'workflow-1',
+                prompt: '旧值',
+                imageUrl: null,
+                extraParams: {},
+                comfyuiSnapshot,
+            },
+        });
+
+        expect((await screen.findByLabelText('历史画面描述') as HTMLInputElement).value).toBe('旧值');
+        expect(screen.queryByLabelText('新版画面描述')).toBeNull();
+        expect(screen.getByRole('button', { name: '模型' }).textContent).toContain('历史模板（历史快照）');
+        await userEvent.setup().click(screen.getByRole('button', { name: '创建任务' }));
+        await waitFor(() => expect(submitted).toBeDefined());
+        expect(submitted).toMatchObject({
+            model: 'workflow-1',
+            extra: {
+                workflowInputs: { old_prompt: '旧值' },
+                sourceTaskId: 77,
+            },
+        });
+    });
 });

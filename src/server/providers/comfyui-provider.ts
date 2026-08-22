@@ -13,12 +13,16 @@ import {
     type ComfyDnsResolver,
     type SafeHttpTarget,
 } from '../comfyui-connection.js';
-import { parseWorkflowTemplateDocument } from '../comfy-workflow-template.js';
+import {
+    parseWorkflowTemplateDocument,
+    type ComfyApiWorkflow,
+} from '../comfy-workflow-template.js';
 import {
     renderWorkflowTemplate,
     renderWorkflowWithValues,
 } from '../comfy-workflow-renderer.js';
 import { uploadComfyImage } from '../comfyui-images.js';
+import { getTaskByIdIncludingDeleted } from '../task-model.js';
 import type {
     CreateTaskParams,
     CreateTaskResult,
@@ -31,7 +35,7 @@ import type {
 
 interface ComfyTaskSnapshot {
     comfyuiBaseUrl: string;
-    workflow: Record<string, unknown>;
+    workflow: ComfyApiWorkflow;
     primaryOutput: { nodeId: string; field: string; index: number };
     comfyuiSafeTarget?: SafeHttpTarget;
 }
@@ -56,7 +60,7 @@ function taskSnapshot(extra: Record<string, unknown> | undefined): ComfyTaskSnap
     }
     return {
         comfyuiBaseUrl: normalizeComfyUiBaseUrl(extra.comfyuiBaseUrl),
-        workflow: extra.workflow,
+        workflow: extra.workflow as ComfyApiWorkflow,
         primaryOutput: output as ComfyTaskSnapshot['primaryOutput'],
         comfyuiSafeTarget: isRecord(extra.comfyuiSafeTarget)
             ? extra.comfyuiSafeTarget as unknown as SafeHttpTarget
@@ -248,10 +252,60 @@ export class ComfyUIProvider implements VideoProvider {
 
     async prepareTask(params: CreateTaskParams): Promise<CreateTaskParams> {
         if (!params.model) throw new Error('请选择 ComfyUI 工作流模板');
+        if (params.extra?.sourceSnapshot !== undefined) {
+            throw new Error('历史套用不接受 sourceSnapshot，请使用 sourceTaskId');
+        }
+        const sourceTaskId = params.extra?.sourceTaskId;
+        if (
+            sourceTaskId !== undefined
+            && (!Number.isInteger(sourceTaskId) || (sourceTaskId as number) <= 0)
+        ) {
+            throw new Error('sourceTaskId 必须是正整数');
+        }
+        let historical: Record<string, unknown> | undefined;
+        if (typeof sourceTaskId === 'number') {
+            const sourceTask = getTaskByIdIncludingDeleted(sourceTaskId);
+            if (
+                !sourceTask
+                || sourceTask.provider !== 'comfyui'
+                || sourceTask.model !== params.model
+                || !sourceTask.extra_params
+            ) {
+                throw new Error('历史来源任务不存在或与所选模板不匹配');
+            }
+            try {
+                const parsedSnapshot = JSON.parse(sourceTask.extra_params) as unknown;
+                if (!isRecord(parsedSnapshot)) throw new Error('not an object');
+                historical = parsedSnapshot;
+            } catch {
+                throw new Error('历史来源任务的工作流快照无效');
+            }
+        }
+        if (historical && (
+            historical.snapshotVersion !== 1
+            || typeof historical.templateId !== 'string'
+            || historical.templateId !== params.model
+            || typeof historical.templateName !== 'string'
+            || typeof historical.templateDocument !== 'string'
+        )) {
+            throw new Error('历史工作流快照无效或与所选模板不匹配');
+        }
         const record = getWorkflowTemplateById(params.model);
-        if (!record || !record.enabled) throw new Error('所选 ComfyUI 工作流模板不存在或已停用');
-        const parsed = parseWorkflowTemplateDocument(record.document);
+        if ((!record || !record.enabled) && !historical) {
+            throw new Error('所选 ComfyUI 工作流模板不存在或已停用');
+        }
+        const document = historical && typeof historical.templateDocument === 'string'
+            ? historical.templateDocument
+            : record?.document;
+        if (!document) throw new Error('历史工作流快照缺少模板文档');
+        const parsed = parseWorkflowTemplateDocument(document);
         if (!parsed.template) throw new Error(parsed.errors.join('\n') || '工作流模板无效');
+        const templateId = historical && typeof historical.templateId === 'string'
+            ? historical.templateId
+            : record?.id ?? params.model;
+        const templateName = historical && typeof historical.templateName === 'string'
+            ? historical.templateName
+            : record?.name ?? parsed.template.metadata.name;
 
         const extra = params.extra;
         const workflowInputs = extra?.workflowInputs;
@@ -320,9 +374,9 @@ export class ComfyUIProvider implements VideoProvider {
             prompt: rendered.primaryDescription,
             extra: {
                 snapshotVersion: 1,
-                templateId: record.id,
-                templateName: record.name,
-                templateDocument: record.document,
+                templateId,
+                templateName,
+                templateDocument: document,
                 comfyuiBaseUrl: baseUrl,
                 comfyuiSafeTarget: safeTarget,
                 workflowInputs: rendered.values,
@@ -330,6 +384,34 @@ export class ComfyUIProvider implements VideoProvider {
                 imageResolutions,
                 workflow: renderWorkflowWithValues(parsed.template, resolvedWorkflowInputs),
                 primaryOutput: parsed.template.metadata.primaryOutput,
+            },
+        };
+    }
+
+    async prepareRetry(params: CreateTaskParams): Promise<CreateTaskParams> {
+        const snapshot = taskSnapshot(params.extra);
+        const safeTarget = await this.safeTarget(snapshot);
+        let compatibility;
+        try {
+            compatibility = await checkComfyWorkflowCompatibility(
+                snapshot.comfyuiBaseUrl,
+                snapshot.workflow,
+                this.options.fetcher,
+                this.options.resolver,
+                safeTarget
+            );
+        } catch (error) {
+            throw new ComfyTaskPreparationError([(error as Error).message]);
+        }
+        if (!compatibility.ok) {
+            throw new ComfyTaskPreparationError(compatibilityErrors(compatibility));
+        }
+        return {
+            ...params,
+            extra: {
+                ...params.extra,
+                comfyuiBaseUrl: snapshot.comfyuiBaseUrl,
+                comfyuiSafeTarget: safeTarget,
             },
         };
     }

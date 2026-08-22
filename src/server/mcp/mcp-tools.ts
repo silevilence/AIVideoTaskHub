@@ -17,6 +17,8 @@ import {
     resolveCreateTaskImages,
 } from '../image-utils.js';
 import { logger } from '../logger.js';
+import type { CreateTaskParams } from '../provider.js';
+import { getComfyTaskSnapshotView } from '../comfy-task-snapshot.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -56,6 +58,18 @@ function formatTaskDetail(task: Task): string {
         `🕐 更新时间: ${task.updated_at}`,
         `🔗 平台任务 ID: ${task.provider_task_id || '无'}`,
     ];
+    const comfySnapshot = getComfyTaskSnapshotView(task);
+    if (comfySnapshot) {
+        lines.push(
+            `🧩 ComfyUI 模板: ${comfySnapshot.templateName} (${comfySnapshot.templateId})`,
+            `🌐 实际地址: ${comfySnapshot.baseUrl}`,
+            `🎯 主输出: ${comfySnapshot.primaryOutput.nodeId}.`
+                + `${comfySnapshot.primaryOutput.field}[${comfySnapshot.primaryOutput.index}]`,
+            `🧾 工作流变量: ${JSON.stringify(Object.fromEntries(
+                comfySnapshot.variables.map((variable) => [variable.key, variable.value])
+            ))}`
+        );
+    }
     return lines.join('\n');
 }
 
@@ -210,8 +224,11 @@ export function registerAllTools(
             inputSchema: {
                 provider: z
                     .string()
-                    .describe('供应商名称，如 siliconflow、volcengine、aihubmix'),
-                prompt: z.string().describe('视频生成的提示词描述'),
+                    .describe('供应商名称，如 siliconflow、volcengine、aihubmix、comfyui'),
+                prompt: z
+                    .string()
+                    .optional()
+                    .describe('视频提示词；ComfyUI 从 workflowInputs 的主描述变量生成，可省略'),
                 model: z.string().optional().describe('模型 ID，不传则使用供应商默认模型'),
                 image_url: z
                     .string()
@@ -220,7 +237,11 @@ export function registerAllTools(
                 params: z
                     .record(z.string(), z.unknown())
                     .optional()
-                    .describe('额外参数（JSON 对象），如 duration、resolution、ratio 等，需与入参规范匹配'),
+                    .describe(
+                        '额外参数（JSON 对象）。ComfyUI 使用 workflowInputs 传变量值、' +
+                        'comfyuiBaseUrl 临时覆盖地址；从历史任务套用时使用 sourceTaskId；' +
+                        '其他 Provider 如 duration、resolution、ratio。'
+                    ),
             },
         },
         async ({ provider, prompt, model, image_url, params }) => {
@@ -236,35 +257,54 @@ export function registerAllTools(
                     isError: true,
                 };
             }
-
-            // 将本地 /uploads/ 路径转换为 base64，确保外部 API 可访问
-            const { resolvedImageUrl, resolvedExtra } = resolveCreateTaskImages(
-                image_url || undefined,
-                params as Record<string, unknown> | undefined,
-            );
+            if (provider !== 'comfyui' && (!prompt || !prompt.trim())) {
+                return {
+                    content: [{ type: 'text' as const, text: '非 ComfyUI 任务必须提供 prompt。' }],
+                    isError: true,
+                };
+            }
 
             try {
+                let prepared: CreateTaskParams = {
+                    prompt: prompt ?? '',
+                    model,
+                    imageUrl: image_url || undefined,
+                    extra: params as Record<string, unknown> | undefined,
+                };
+                prepared = await p.prepareTask?.(prepared) ?? prepared;
+                const { resolvedImageUrl, resolvedExtra } = resolveCreateTaskImages(
+                    prepared.imageUrl,
+                    prepared.extra,
+                );
                 const task = insertTask({
                     provider,
-                    prompt,
-                    model,
-                    imageUrl: image_url,
-                    extraParams: resolvedExtra,
+                    prompt: prepared.prompt,
+                    model: prepared.model,
+                    imageUrl: prepared.imageUrl,
+                    extraParams: prepared.extra,
                 });
 
-                const result = await p.createTask({
-                    prompt,
-                    model,
-                    imageUrl: resolvedImageUrl,
-                    extra: resolvedExtra,
-                });
+                let result;
+                try {
+                    result = await p.createTask({
+                        prompt: prepared.prompt,
+                        model: prepared.model,
+                        imageUrl: resolvedImageUrl,
+                        extra: resolvedExtra,
+                    });
+                } catch (error) {
+                    updateTaskStatus(task.id, 'failed', {
+                        errorMessage: (error as Error).message,
+                    });
+                    throw error;
+                }
 
                 updateTaskStatus(task.id, 'pending', {
                     providerTaskId: result.providerTaskId,
                 });
 
                 const created = getTaskById(task.id)!;
-                logger.taskCreated(task.id, provider, model || 'default');
+                logger.taskCreated(task.id, provider, prepared.model || 'default');
 
                 return {
                     content: [
@@ -399,6 +439,7 @@ export function registerAllTools(
             const detail = {
                 ...task,
                 extra_params: extraParams,
+                comfyui_snapshot: getComfyTaskSnapshotView(task) ?? null,
                 video_file_size: getVideoFileSize(task.result_url || ''),
             };
 

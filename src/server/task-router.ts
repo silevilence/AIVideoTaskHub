@@ -16,6 +16,7 @@ import {
     getDeletedTasks,
     getDeletedTaskById,
     purgeTask,
+    resetTaskForRetry,
     restoreTask,
 } from './task-model.js';
 import type { CreateTaskParams, ModelInfo } from './provider.js';
@@ -41,6 +42,7 @@ import { callLLM, callLLMStream, fetchLLMModels, type ContentPart } from './llm-
 import { resolveCreateTaskImages, resolveImageUrl, resolveImageUrls } from './image-utils.js';
 import { createComfyUiRouter, createComfyWorkflowRouter } from './comfy-workflow-router.js';
 import { WorkflowInputValidationError } from './comfy-workflow-renderer.js';
+import { withComfyTaskSnapshot } from './comfy-task-snapshot.js';
 import {
     getAllPrompts,
     getPromptById,
@@ -347,9 +349,9 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
                 startDate: typeof startDate === 'string' ? startDate : undefined,
                 endDate: typeof endDate === 'string' ? endDate : undefined,
             };
-            res.json(filterTasks(filter));
+            res.json(filterTasks(filter).map(withComfyTaskSnapshot));
         } else {
-            res.json(getAllTasks());
+            res.json(getAllTasks().map(withComfyTaskSnapshot));
         }
     });
 
@@ -365,11 +367,11 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
             res.status(404).json({ error: '任务不存在' });
             return;
         }
-        res.json(task);
+        res.json(withComfyTaskSnapshot(task));
     });
 
     // 重试任务
-    router.post('/tasks/:id/retry', (req, res) => {
+    router.post('/tasks/:id/retry', async (req, res) => {
         const id = Number(req.params.id);
         if (isNaN(id)) {
             res.status(400).json({ error: '无效的任务 ID' });
@@ -384,9 +386,38 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
             res.status(400).json({ error: '只有 failed 状态的任务可以重试' });
             return;
         }
-        updateTaskStatus(id, 'pending', { errorMessage: '' });
+        let extra: Record<string, unknown> | undefined;
+        try {
+            extra = task.extra_params
+                ? JSON.parse(task.extra_params) as Record<string, unknown>
+                : undefined;
+            const provider = registry.get(task.provider);
+            if (!provider) throw new Error(`Provider "${task.provider}" 不存在`);
+            if (provider.prepareRetry) {
+                const prepared = await provider.prepareRetry({
+                    prompt: task.prompt,
+                    model: task.model ?? undefined,
+                    imageUrl: task.image_url ?? undefined,
+                    extra,
+                });
+                extra = prepared.extra;
+            }
+        } catch (error) {
+            const errors = Array.isArray((error as { errors?: unknown }).errors)
+                ? (error as { errors: string[] }).errors
+                : undefined;
+            res.status(400).json({
+                error: `重试预检失败: ${(error as Error).message}`,
+                ...(errors ? { errors } : {}),
+            });
+            return;
+        }
+        if (!resetTaskForRetry(task, extra)) {
+            res.status(409).json({ error: '任务状态已变化，请刷新后重试' });
+            return;
+        }
         const updated = getTaskById(id)!;
-        res.json(updated);
+        res.json(withComfyTaskSnapshot(updated));
     });
 
     // 删除任务（软删除）
@@ -440,7 +471,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
                     fileSize += stat.size;
                 } catch { /* 文件不存在 */ }
             }
-            return { ...task, file_size: fileSize };
+            return { ...withComfyTaskSnapshot(task), file_size: fileSize };
         });
 
         res.json(tasksWithSize);
@@ -458,7 +489,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
             res.status(404).json({ error: '任务不存在或不在回收站中' });
             return;
         }
-        res.json(task);
+        res.json(withComfyTaskSnapshot(task));
     });
 
     // 彻底删除回收站任务

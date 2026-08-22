@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchProviderModels, fetchProviders, createTask, uploadImage, fetchSettings, fetchTasks, fetchTrashTasks, fetchUploadedImages } from '../api';
-import type { ProviderInfo, ProviderSettings, ModelInfo, ModelCapabilities, ApplyParams, Task, TrashTask, UploadedImage } from '../api';
+import type { ProviderInfo, ProviderSettings, ModelInfo, ModelCapabilities, ApplyParams, Task, TrashTask, UploadedImage, ComfyTaskSnapshotView } from '../api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
@@ -9,6 +9,7 @@ import { Card, CardContent } from './ui/card';
 import { cn } from '../lib/utils';
 import { Sparkles, Upload, X, ChevronDown, AlertTriangle, ClipboardPaste, Play, Info, ExternalLink, Image as ImageIcon, Wand2 } from 'lucide-react';
 import { PromptOptimizer } from './PromptOptimizer';
+import { ComfyTaskSnapshotDetails } from './ComfyTaskSnapshotDetails';
 import {
     ComfyTaskFields,
     createComfyInputDefaults,
@@ -70,6 +71,12 @@ export function CreateTaskForm({
     const [comfyInputs, setComfyInputs] = useState<ComfyInputValues>({});
     const [comfyInputErrors, setComfyInputErrors] = useState<ComfyInputErrors>({});
     const [comfyBaseUrl, setComfyBaseUrl] = useState('');
+    const [historicalComfy, setHistoricalComfy] = useState<{
+        model: ModelInfo;
+        values: ComfyInputValues;
+        baseUrl: string;
+        sourceTaskId: number;
+    } | null>(null);
 
     // 套用参数弹窗相关状态
     const [applyModalOpen, setApplyModalOpen] = useState(false);
@@ -125,8 +132,16 @@ export function CreateTaskForm({
     }>>({});
 
     const providers = Object.keys(providerModels).filter((p) => p !== 'mock');
-    const models: ModelInfo[] = provider ? (providerModels[provider] ?? []) : [];
-    const currentModelInfo = models.find((m) => m.id === model);
+    const providerModelList: ModelInfo[] = provider ? (providerModels[provider] ?? []) : [];
+    const models: ModelInfo[] = historicalComfy && provider === 'comfyui'
+        ? [
+            historicalComfy.model,
+            ...providerModelList.filter((item) => item.id !== historicalComfy.model.id),
+        ]
+        : providerModelList;
+    const currentModelInfo = historicalComfy?.model.id === model
+        ? historicalComfy.model
+        : models.find((m) => m.id === model);
     const caps: ModelCapabilities | undefined = currentModelInfo?.capabilities;
     const comfySchema = currentModelInfo?.parameterSchema;
     const isComfyTask = provider === 'comfyui' && comfySchema?.kind === 'comfyui-workflow';
@@ -194,17 +209,23 @@ export function CreateTaskForm({
             setComfyInputErrors({});
             return;
         }
-        setComfyInputs(createComfyInputDefaults(comfySchema));
+        if (historicalComfy?.model.id === model) {
+            setComfyInputs(historicalComfy.values);
+            setComfyBaseUrl(historicalComfy.baseUrl);
+        } else {
+            setComfyInputs(createComfyInputDefaults(comfySchema));
+        }
         setComfyInputErrors({});
-    }, [comfySchema]);
+    }, [comfySchema, historicalComfy, model]);
 
     useEffect(() => {
         if (provider !== 'comfyui') return;
         const settings = allSettings.comfyui;
         const configured = settings?.values.base_url;
         const fallback = settings?.schema.find((item) => item.key === 'base_url')?.defaultValue;
+        if (historicalComfy?.model.id === model) return;
         setComfyBaseUrl(configured || fallback || '');
-    }, [provider, allSettings]);
+    }, [provider, allSettings, historicalComfy, model]);
 
     // 关闭下拉菜单（点击外部时）
     useEffect(() => {
@@ -341,6 +362,28 @@ export function CreateTaskForm({
 
     // 应用参数到表单
     const applyParamsToForm = (params: ApplyParams) => {
+        if (params.provider === 'comfyui' && params.comfyuiSnapshot && params.sourceTaskId) {
+            const snapshot: ComfyTaskSnapshotView = params.comfyuiSnapshot;
+            const values = Object.fromEntries(snapshot.variables.map((variable) => [
+                variable.key,
+                variable.value,
+            ]));
+            setHistoricalComfy({
+                model: {
+                    id: params.model ?? snapshot.templateId,
+                    displayName: `${snapshot.templateName}（历史快照）`,
+                    parameterSchema: snapshot.parameterSchema,
+                },
+                values,
+                baseUrl: snapshot.baseUrl,
+                sourceTaskId: params.sourceTaskId,
+            });
+            setComfyInputs(values);
+            setComfyBaseUrl(snapshot.baseUrl);
+            setComfyInputErrors({});
+        } else {
+            setHistoricalComfy(null);
+        }
         setProvider(params.provider);
         setModel(params.model ?? '');
         setPrompt(params.prompt);
@@ -414,6 +457,7 @@ export function CreateTaskForm({
 
     const handleProviderChange = (name: string) => {
         stashCurrentParams();
+        if (name !== 'comfyui') setHistoricalComfy(null);
         setProvider(name);
         const m = providerModels[name] ?? [];
         const firstModel = m.length > 0 ? (m.find((mi) => !mi.disabled) ?? m[0]).id : '';
@@ -425,6 +469,7 @@ export function CreateTaskForm({
 
     const handleModelChange = (modelId: string) => {
         stashCurrentParams();
+        if (historicalComfy && modelId !== historicalComfy.model.id) setHistoricalComfy(null);
         setModel(modelId);
         // 图片资源跨模型保持不变
         const info = models.find((mi) => mi.id === modelId);
@@ -529,6 +574,9 @@ export function CreateTaskForm({
                 }
                 extra.workflowInputs = comfyInputs;
                 extra.comfyuiBaseUrl = comfyBaseUrl.trim();
+                if (historicalComfy?.model.id === model) {
+                    extra.sourceTaskId = historicalComfy.sourceTaskId;
+                }
                 const primaryValue = comfySchema.primaryDescription
                     ? comfyInputs[comfySchema.primaryDescription]
                     : undefined;
@@ -1308,11 +1356,13 @@ export function CreateTaskForm({
                     onClose={() => setApplyModalOpen(false)}
                     onApply={(task) => {
                         const params: ApplyParams = {
+                            sourceTaskId: task.id,
                             provider: task.provider,
                             model: task.model,
                             prompt: task.prompt,
                             imageUrl: task.image_url,
                             extraParams: task.extra_params ? JSON.parse(task.extra_params) : {},
+                            comfyuiSnapshot: task.comfyui_snapshot,
                         };
                         applyParamsToForm(params);
                         setApplyModalOpen(false);
@@ -1737,6 +1787,12 @@ function ApplyParamsDetailModal({
                         <span className="font-medium">{new Date(task.created_at + 'Z').toLocaleString()}</span>
                     </div>
                 </div>
+
+                {task.comfyui_snapshot && (
+                    <div className="px-5 pt-3">
+                        <ComfyTaskSnapshotDetails snapshot={task.comfyui_snapshot} />
+                    </div>
+                )}
 
                 {/* 额外参数 */}
                 {entries.length > 0 && (
