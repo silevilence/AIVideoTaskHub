@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { TrashTask, TrashFilter, ProviderInfo, ApplyParams } from '../api';
-import { fetchTrashTasks, fetchProviders, fetchProviderModels, purgeTask, restoreTask } from '../api';
+import { fetchTrashTask, fetchTrashTasks, fetchProviders, fetchProviderModels, purgeTask, restoreTask } from '../api';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent } from './ui/card';
@@ -188,6 +188,14 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
     const [purgeStep, setPurgeStep] = useState<'idle' | 'confirm1' | 'confirm2'>('idle');
     const [purgeTarget, setPurgeTarget] = useState<TrashTask | null>(null);
     const [alertMessage, setAlertMessage] = useState<string | null>(null);
+
+    const handleShowParams = async (task: TrashTask) => {
+        try {
+            setParamsTask(await fetchTrashTask(task.id));
+        } catch (err) {
+            setAlertMessage((err as Error).message);
+        }
+    };
 
     // Filter state
     const [filterOpen, setFilterOpen] = useState(false);
@@ -467,7 +475,7 @@ export function RecycleBin({ onApplyParams }: { onApplyParams: (params: ApplyPar
                             onPurge={handlePurgeRequest}
                             onRestore={handleRestore}
                             onPreview={setPreviewTask}
-                            onShowParams={setParamsTask}
+                            onShowParams={handleShowParams}
                             providerDisplayName={providerDisplayName}
                             modelDisplayNames={modelDisplayNames}
                         />

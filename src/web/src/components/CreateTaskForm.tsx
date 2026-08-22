@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchProviderModels, fetchProviders, createTask, uploadImage, fetchSettings, fetchTasks, fetchTrashTasks, fetchUploadedImages } from '../api';
+import { fetchProviderModels, fetchProviders, createTask, uploadImage, fetchSettings, fetchTask, fetchTasks, fetchTrashTask, fetchTrashTasks, fetchUploadedImages } from '../api';
 import type { ProviderInfo, ProviderSettings, ModelInfo, ModelCapabilities, ApplyParams, Task, TrashTask, UploadedImage, ComfyTaskSnapshotView } from '../api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -1354,21 +1354,36 @@ export function CreateTaskForm({
                     trashTasks={applyTrashTasks}
                     loading={applyModalLoading}
                     onClose={() => setApplyModalOpen(false)}
-                    onApply={(task) => {
-                        const params: ApplyParams = {
-                            sourceTaskId: task.id,
-                            provider: task.provider,
-                            model: task.model,
-                            prompt: task.prompt,
-                            imageUrl: task.image_url,
-                            extraParams: task.extra_params ? JSON.parse(task.extra_params) : {},
-                            comfyuiSnapshot: task.comfyui_snapshot,
-                        };
-                        applyParamsToForm(params);
-                        setApplyModalOpen(false);
+                    onApply={async (task) => {
+                        try {
+                            const detailed = task.deleted_at
+                                ? await fetchTrashTask(task.id)
+                                : await fetchTask(task.id);
+                            const params: ApplyParams = {
+                                sourceTaskId: detailed.id,
+                                provider: detailed.provider,
+                                model: detailed.model,
+                                prompt: detailed.prompt,
+                                imageUrl: detailed.image_url,
+                                extraParams: detailed.extra_params ? JSON.parse(detailed.extra_params) : {},
+                                comfyuiSnapshot: detailed.comfyui_snapshot,
+                            };
+                            applyParamsToForm(params);
+                            setApplyModalOpen(false);
+                        } catch (err) {
+                            setError((err as Error).message);
+                        }
                     }}
                     onPreview={setApplyPreviewTask}
-                    onShowParams={setApplyParamsTask}
+                    onShowParams={async (task) => {
+                        try {
+                            setApplyParamsTask(task.deleted_at
+                                ? await fetchTrashTask(task.id)
+                                : await fetchTask(task.id));
+                        } catch (err) {
+                            setError((err as Error).message);
+                        }
+                    }}
                     providerInfos={providerInfos}
                     modelDisplayNames={Object.fromEntries(
                         Object.values(providerModels).flat().map(m => [m.id, m.displayName])

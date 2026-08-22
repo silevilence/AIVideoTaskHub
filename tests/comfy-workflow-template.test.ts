@@ -116,6 +116,21 @@ describe('ComfyUI 工作流模板文档', () => {
         expect(result.errors).toContain('变量 steps 的默认值必须小于等于 100');
     });
 
+    it('拒绝错误类型的模板说明与不适用于变量类型的约束', () => {
+        const invalidDescription = parseWorkflowTemplateDocument(
+            validDocument.replace('name: 基础文生视频', 'name: 基础文生视频\ndescription: 123')
+        );
+        const invalidConstraint = parseWorkflowTemplateDocument(
+            validDocument.replace(
+                '    type: integer\n    default: 20\n    min: 1\n    max: 100\n    step: 1',
+                '    type: boolean\n    default: true\n    min: wrong'
+            )
+        );
+
+        expect(invalidDescription.errors).toContain('模板说明必须是字符串');
+        expect(invalidConstraint.errors).toContain('变量 steps 的 min 不适用于 boolean 类型');
+    });
+
     it('拒绝不存在的主输出节点', () => {
         const result = parseWorkflowTemplateDocument(
             validDocument.replace('  nodeId: "9"', '  nodeId: "99"')

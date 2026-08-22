@@ -98,6 +98,12 @@ export interface ModelParameterDefinition {
     options?: { label: string; value: string }[];
 }
 
+export async function fetchTask(id: number): Promise<Task> {
+    const res = await fetch(`${BASE}/tasks/${id}`);
+    if (!res.ok) throw new Error('获取任务详情失败');
+    return res.json();
+}
+
 export interface ModelParameterSchema {
     kind: 'comfyui-workflow';
     variables: ModelParameterDefinition[];
@@ -734,7 +740,7 @@ export interface ComfyCompatibilityResult {
     nodeTypeCount: number;
     missingNodeTypes: string[];
     missingRequiredInputs: { nodeId: string; classType: string; input: string }[];
-    incompatibleInputs: { nodeId: string; classType: string; input: string }[];
+    incompatibleInputs: { nodeId: string; classType: string; input: string; reason?: string }[];
 }
 
 export class ComfyWorkflowApiError extends Error {

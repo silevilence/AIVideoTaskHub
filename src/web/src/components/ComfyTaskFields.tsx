@@ -14,6 +14,26 @@ import { Textarea } from './ui/textarea';
 export type ComfyInputValues = Record<string, unknown>;
 export type ComfyInputErrors = Record<string, string>;
 
+function constraintSummary(variable: ModelParameterDefinition): string | undefined {
+    if (variable.type === 'integer' || variable.type === 'number') {
+        const range = variable.min !== undefined && variable.max !== undefined
+            ? `范围：${variable.min}–${variable.max}`
+            : variable.min !== undefined
+                ? `最小值：${variable.min}`
+                : variable.max !== undefined ? `最大值：${variable.max}` : '';
+        const step = variable.step !== undefined ? `步进：${variable.step}` : '';
+        return [range, step].filter(Boolean).join('；') || undefined;
+    }
+    if (variable.type === 'string') {
+        if (variable.minLength !== undefined && variable.maxLength !== undefined) {
+            return `长度：${variable.minLength}–${variable.maxLength} 个字符`;
+        }
+        if (variable.minLength !== undefined) return `至少 ${variable.minLength} 个字符`;
+        if (variable.maxLength !== undefined) return `最多 ${variable.maxLength} 个字符`;
+    }
+    return undefined;
+}
+
 function isRecognizableImageSource(value: unknown): value is string {
     if (typeof value !== 'string') return false;
     const source = value.trim();
@@ -245,6 +265,7 @@ export function ComfyTaskFields({
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {schema.variables.map((variable) => {
                     const error = errors[variable.key];
+                    const constraints = constraintSummary(variable);
                     const id = `comfy-input-${variable.key}`;
                     const common = {
                         id,
@@ -267,6 +288,8 @@ export function ComfyTaskFields({
                                 <Textarea
                                     {...common}
                                     rows={4}
+                                    minLength={variable.minLength}
+                                    maxLength={variable.maxLength}
                                     value={String(values[variable.key] ?? '')}
                                     onChange={(event) => onChange(variable.key, event.target.value)}
                                 />
@@ -329,6 +352,8 @@ export function ComfyTaskFields({
                                     min={variable.min}
                                     max={variable.max}
                                     step={variable.step}
+                                    minLength={variable.type === 'string' ? variable.minLength : undefined}
+                                    maxLength={variable.type === 'string' ? variable.maxLength : undefined}
                                     value={String(values[variable.key] ?? '')}
                                     onChange={(event) => onChange(
                                         variable.key,
@@ -339,6 +364,7 @@ export function ComfyTaskFields({
                                 />
                             )}
                             {variable.description && <p className="text-xs text-muted-foreground">{variable.description}</p>}
+                            {constraints && <p className="text-xs text-muted-foreground">{constraints}</p>}
                             {error && <p id={`${id}-error`} className="text-xs text-destructive">{error}</p>}
                         </div>
                     );

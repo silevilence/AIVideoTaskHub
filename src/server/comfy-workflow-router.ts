@@ -12,6 +12,7 @@ import {
 import { parseWorkflowTemplateDocument } from './comfy-workflow-template.js';
 import {
     checkComfyWorkflowCompatibility,
+    checkComfyWorkflowTemplateCompatibility,
     normalizeComfyUiBaseUrl,
 } from './comfyui-connection.js';
 import { getSetting, setSetting } from './task-model.js';
@@ -256,7 +257,10 @@ export function createComfyUiRouter(registry?: ProviderRegistry): Router {
             return;
         }
         try {
-            res.json(await checkComfyWorkflowCompatibility(baseUrl, validation.template.workflow));
+            res.json(await checkComfyWorkflowTemplateCompatibility(
+                baseUrl,
+                validation.template.workflow
+            ));
         } catch (error) {
             res.status(502).json({ error: databaseErrorMessage(error) });
         }

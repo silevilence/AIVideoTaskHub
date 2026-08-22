@@ -121,6 +121,9 @@ function validateMetadata(value: unknown): string[] {
     const errors: string[] = [];
     if (value.schemaVersion !== 1) errors.push('仅支持 schemaVersion: 1');
     if (typeof value.name !== 'string' || !value.name.trim()) errors.push('模板名称不能为空');
+    if (value.description !== undefined && typeof value.description !== 'string') {
+        errors.push('模板说明必须是字符串');
+    }
     if (!Array.isArray(value.variables)) {
         errors.push('variables 必须是数组');
         return errors;
@@ -147,6 +150,22 @@ function validateMetadata(value: unknown): string[] {
         if (typeof variable.type !== 'string' || !VARIABLE_TYPES.has(variable.type as WorkflowVariableType)) {
             errors.push(`变量 ${variable.key} 的类型不受支持`);
             continue;
+        }
+        const allowedConstraintFields: Record<WorkflowVariableType, readonly string[]> = {
+            integer: ['min', 'max', 'step'],
+            number: ['min', 'max', 'step'],
+            string: ['multiline', 'minLength', 'maxLength'],
+            boolean: [],
+            option: ['options'],
+            image: [],
+        };
+        for (const field of ['min', 'max', 'step', 'multiline', 'minLength', 'maxLength', 'options']) {
+            if (
+                variable[field] !== undefined
+                && !allowedConstraintFields[variable.type as WorkflowVariableType].includes(field)
+            ) {
+                errors.push(`变量 ${variable.key} 的 ${field} 不适用于 ${variable.type} 类型`);
+            }
         }
         if (variable.type === 'integer' || variable.type === 'number') {
             const numericFields = ['min', 'max', 'step'] as const;

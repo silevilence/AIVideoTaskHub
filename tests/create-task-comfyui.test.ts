@@ -257,4 +257,61 @@ describe('创建 ComfyUI 任务', () => {
             },
         });
     });
+
+    it('从轻量任务列表套用时按 id 懒加载完整历史快照', async () => {
+        const task = {
+            id: 9,
+            provider: 'comfyui',
+            provider_task_id: 'remote-9',
+            status: 'failed',
+            prompt: '轻量历史',
+            model: 'deleted-workflow',
+            image_url: null,
+            result_url: null,
+            error_message: 'failed',
+            extra_params: null,
+            retry_count: 0,
+            created_at: '2026-08-22 00:00:00',
+            updated_at: '2026-08-22 00:00:00',
+            deleted_at: null,
+            purged_at: null,
+        };
+        const detail = {
+            ...task,
+            extra_params: JSON.stringify({ snapshotVersion: 1 }),
+            comfyui_snapshot: {
+                templateId: 'deleted-workflow',
+                templateName: '历史模板',
+                baseUrl: 'http://history-comfy:8188',
+                primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+                parameterSchema: {
+                    kind: 'comfyui-workflow',
+                    variables: [{ key: 'prompt', label: '历史提示词', type: 'string' }],
+                    primaryDescription: 'prompt',
+                    primaryOutput: { nodeId: '2', field: 'videos', index: 0 },
+                },
+                variables: [{ key: 'prompt', label: '历史提示词', type: 'string', value: '完整值' }],
+                images: [],
+            },
+        };
+        vi.mocked(fetch).mockImplementation(async (input) => {
+            const url = String(input);
+            if (url.endsWith('/api/providers/models')) return jsonResponse({ comfyui: [] });
+            if (url.endsWith('/api/providers')) return jsonResponse([{ name: 'comfyui', displayName: 'ComfyUI' }]);
+            if (url.endsWith('/api/settings')) return jsonResponse(settings);
+            if (url.endsWith('/api/tasks')) return jsonResponse([task]);
+            if (url.endsWith('/api/trash')) return jsonResponse([]);
+            if (url.endsWith('/api/tasks/9')) return jsonResponse(detail);
+            throw new Error(`未模拟请求：${url}`);
+        });
+        const user = userEvent.setup();
+        await renderTaskForm({ onCreated: vi.fn() });
+
+        await user.click(await screen.findByRole('button', { name: '套用参数' }));
+        expect(await screen.findByText('轻量历史')).toBeTruthy();
+        await user.click(screen.getByRole('button', { name: '套用' }));
+
+        expect((await screen.findByLabelText('历史提示词') as HTMLInputElement).value).toBe('完整值');
+        expect(fetch).toHaveBeenCalledWith('/api/tasks/9');
+    });
 });

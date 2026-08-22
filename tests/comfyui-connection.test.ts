@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
     checkComfyWorkflowCompatibility,
+    checkComfyWorkflowTemplateCompatibility,
     downloadSafeHttpUrl,
     normalizeComfyUiBaseUrl,
     requestSafeHttpUrl,
@@ -200,6 +201,29 @@ describe('ComfyUI 连接与模板兼容性', () => {
         expect(result.ok).toBe(false);
         expect(result.missingRequiredInputs).toEqual([
             { nodeId: '3', classType: 'KSampler', input: 'model' },
+        ]);
+    });
+
+    it('模板在线检查跳过变量令牌的值类型但仍检查输入名称', async () => {
+        const result = await checkComfyWorkflowTemplateCompatibility(
+            'http://127.0.0.1:8188',
+            {
+                '3': {
+                    class_type: 'KSampler',
+                    inputs: { steps: '${steps}', enabled: '${enabled}', unknown: '${value}' },
+                },
+            },
+            vi.fn(async () => new Response(JSON.stringify({
+                KSampler: {
+                    input: {
+                        required: { steps: ['INT', {}], enabled: ['BOOLEAN', {}] },
+                    },
+                },
+            }), { status: 200 }))
+        );
+
+        expect(result.incompatibleInputs).toEqual([
+            { nodeId: '3', classType: 'KSampler', input: 'unknown' },
         ]);
     });
 

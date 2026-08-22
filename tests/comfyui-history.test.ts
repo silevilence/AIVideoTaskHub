@@ -5,7 +5,6 @@ import { closeDb, initDb } from '../src/server/database.js';
 import {
     createWorkflowTemplate,
     deleteWorkflowTemplate,
-    setWorkflowTemplateEnabled,
 } from '../src/server/comfy-workflow-model.js';
 import { registerAllTools } from '../src/server/mcp/mcp-tools.js';
 import { ProviderRegistry } from '../src/server/provider-registry.js';
@@ -71,6 +70,10 @@ describe('ComfyUI 历史任务兼容', () => {
             extraParams: historicalSnapshot(),
         });
 
+        const activeList = await request(app).get('/api/tasks');
+        expect(activeList.body[0].extra_params).toBeNull();
+        expect(activeList.body[0].comfyui_snapshot).toBeUndefined();
+
         const active = await request(app).get(`/api/tasks/${task.id}`);
         expect(active.body.comfyui_snapshot).toEqual({
             templateId: 'deleted-template',
@@ -91,6 +94,9 @@ describe('ComfyUI 历史任务兼容', () => {
         });
 
         await request(app).delete(`/api/tasks/${task.id}`);
+        const trashList = await request(app).get('/api/trash');
+        expect(trashList.body[0].extra_params).toBeNull();
+        expect(trashList.body[0].comfyui_snapshot).toBeUndefined();
         const trash = await request(app).get(`/api/trash/${task.id}`);
         expect(trash.body.comfyui_snapshot).toEqual(active.body.comfyui_snapshot);
     });
@@ -288,6 +294,19 @@ describe('ComfyUI 历史任务兼容', () => {
             }),
         } as never, registry);
 
+        const forged = await handlers.get('submit_task')!({
+            provider: 'comfyui',
+            model: template.id,
+            params: {
+                workflowInputs: { prompt: '伪造快照' },
+                comfyuiBaseUrl: baseUrl,
+                sourceSnapshot: historicalSnapshot(template.id),
+            },
+        });
+        expect(forged.isError).toBe(true);
+        expect(forged.content[0].text).toContain('sourceTaskId');
+        expect(getAllTasks()).toEqual([]);
+
         const invalid = await handlers.get('submit_task')!({
             provider: 'comfyui',
             model: template.id,
@@ -320,8 +339,71 @@ describe('ComfyUI 历史任务兼容', () => {
         expect(detail.content[0].text).toContain(`🌐 实际地址: ${baseUrl}`);
         expect(detail.content[0].text).toContain('"prompt":"MCP 云海"');
 
-        setWorkflowTemplateEnabled(template.id, false);
+        const sourceTaskId = getAllTasks()[0].id;
+        deleteWorkflowTemplate(template.id);
+        const reapplied = await handlers.get('submit_task')!({
+            provider: 'comfyui',
+            model: template.id,
+            params: {
+                workflowInputs: { prompt: 'MCP 历史云海' },
+                comfyuiBaseUrl: baseUrl,
+                sourceTaskId,
+            },
+        });
+        expect(reapplied.isError).not.toBe(true);
+        expect(getAllTasks()[0].prompt).toBe('MCP 历史云海');
+
         const models = await handlers.get('get_models')!({ provider: 'comfyui' });
         expect(JSON.parse(models.content[0].text).comfyui.models).toEqual([]);
+    });
+
+    it('MCP 远端创建失败时保留 failed 本地任务与诊断信息', async () => {
+        const template = createWorkflowTemplate({
+            document: comfyWorkflowTemplateDocument('MCP 失败模板'),
+        });
+        const provider = new ComfyUIProvider({
+            resolver,
+            fetcher: vi.fn(async (input: string | URL | Request) => {
+                const url = String(input);
+                if (url.endsWith('/object_info')) {
+                    return new Response(JSON.stringify({
+                        TextNode: { input: { required: { text: ['STRING', {}] } } },
+                        VideoNode: { input: { required: { source: ['VIDEO', {}] } } },
+                    }), { status: 200 });
+                }
+                if (url.endsWith('/prompt')) {
+                    return new Response(JSON.stringify({
+                        node_errors: {
+                            '1': { class_type: 'TextNode', errors: [{ message: '节点拒绝输入' }] },
+                        },
+                    }), { status: 400 });
+                }
+                throw new Error(`未模拟请求：${url}`);
+            }),
+        });
+        const { registry } = setup(provider);
+        const handlers = new Map<string, (args: Record<string, unknown>) => Promise<{
+            content: Array<{ type: string; text: string }>;
+            isError?: boolean;
+        }>>();
+        registerAllTools({
+            registerTool: vi.fn((name: string, _definition: unknown, handler: never) => {
+                handlers.set(name, handler);
+            }),
+        } as never, registry);
+
+        const result = await handlers.get('submit_task')!({
+            provider: 'comfyui',
+            model: template.id,
+            params: {
+                workflowInputs: { prompt: '失败任务' },
+                comfyuiBaseUrl: baseUrl,
+            },
+        });
+
+        expect(result.isError).toBe(true);
+        expect(getAllTasks()).toHaveLength(1);
+        expect(getAllTasks()[0]).toMatchObject({ status: 'failed' });
+        expect(getAllTasks()[0].error_message).toContain('节点拒绝输入');
     });
 });

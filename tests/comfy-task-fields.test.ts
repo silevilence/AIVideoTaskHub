@@ -17,7 +17,7 @@ const schema = {
     variables: [
         { key: 'steps', label: '步数', description: '采样步数', type: 'integer', default: 20, min: 1, max: 40 },
         { key: 'cfg', label: '引导系数', type: 'number', step: 0.5 },
-        { key: 'prompt', label: '提示词', type: 'string', multiline: true },
+        { key: 'prompt', label: '提示词', type: 'string', multiline: true, minLength: 2, maxLength: 200 },
         { key: 'enhance', label: '启用增强', type: 'boolean', default: true },
         { key: 'safety', label: '安全检查', type: 'boolean' },
         {
@@ -66,6 +66,10 @@ describe('ComfyUI 动态任务字段', () => {
         expect(screen.getByRole('radio', { name: '安全检查：关闭' }).getAttribute('aria-checked')).toBe('false');
         expect((screen.getByLabelText('采样器') as HTMLSelectElement).value).toBe('euler');
         expect(screen.getByLabelText('提示词').tagName).toBe('TEXTAREA');
+        expect(screen.getByLabelText('提示词').getAttribute('minlength')).toBe('2');
+        expect(screen.getByLabelText('提示词').getAttribute('maxlength')).toBe('200');
+        expect(screen.getByText('范围：1–40')).toBeTruthy();
+        expect(screen.getByText('长度：2–200 个字符')).toBeTruthy();
     });
 
     it('将数字转换为原生类型并显示字段级错误', async () => {

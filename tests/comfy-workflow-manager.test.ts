@@ -137,6 +137,38 @@ describe('ComfyUI 工作流管理器交互', () => {
         expect(alert.textContent).not.toContain('仍可离线保存');
     });
 
+    it('在线兼容性结果展示具体输入不兼容原因', async () => {
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.endsWith('/api/comfyui/settings')) {
+                return jsonResponse({ baseUrl: 'http://127.0.0.1:8188' });
+            }
+            if (url.endsWith('/api/comfyui/workflows')) return jsonResponse([]);
+            if (url.endsWith('/api/comfyui/workflows/check')) {
+                return jsonResponse({
+                    ok: false,
+                    baseUrl: 'http://127.0.0.1:8188',
+                    nodeTypeCount: 1,
+                    missingNodeTypes: [],
+                    missingRequiredInputs: [],
+                    incompatibleInputs: [{
+                        nodeId: '3',
+                        classType: 'KSampler',
+                        input: 'steps',
+                        reason: '必须是整数',
+                    }],
+                });
+            }
+            throw new Error(`未模拟请求：${url}`);
+        }));
+        const user = userEvent.setup();
+        await renderManager();
+        await user.click(await screen.findByRole('button', { name: '新建模板' }));
+        await user.click(screen.getByRole('button', { name: '检查默认实例' }));
+
+        expect(await screen.findByText(/输入 steps：必须是整数/)).toBeTruthy();
+    });
+
     it('模板图标操作具有包含模板名的可访问名称', async () => {
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);

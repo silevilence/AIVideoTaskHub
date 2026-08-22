@@ -104,6 +104,22 @@ function isEditableVariable(value: unknown): value is WorkflowVariableDraft {
     ) {
         return false;
     }
+    const allowedConstraintFields: Record<WorkflowVariableType, readonly string[]> = {
+        integer: ['min', 'max', 'step'],
+        number: ['min', 'max', 'step'],
+        string: ['multiline', 'minLength', 'maxLength'],
+        boolean: [],
+        option: ['options'],
+        image: [],
+    };
+    for (const field of ['min', 'max', 'step', 'multiline', 'minLength', 'maxLength', 'options']) {
+        if (
+            value[field] !== undefined
+            && !allowedConstraintFields[value.type as WorkflowVariableType].includes(field)
+        ) {
+            return false;
+        }
+    }
     if (value.type !== 'option') return true;
     return Array.isArray(value.options) && value.options.every((option) => (
         isRecord(option)

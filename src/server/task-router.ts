@@ -61,6 +61,12 @@ import {
     type UpdatePromptParams,
 } from './prompt-model.js';
 
+function toTaskListItem<T extends { extra_params: string | null }>(
+    task: T
+): Omit<T, 'extra_params'> & { extra_params: null } {
+    return { ...task, extra_params: null };
+}
+
 export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpServerManager): Router {
     const router = Router();
     const dataDir = process.env.DATA_DIR || 'data';
@@ -349,9 +355,9 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
                 startDate: typeof startDate === 'string' ? startDate : undefined,
                 endDate: typeof endDate === 'string' ? endDate : undefined,
             };
-            res.json(filterTasks(filter).map(withComfyTaskSnapshot));
+            res.json(filterTasks(filter).map(toTaskListItem));
         } else {
-            res.json(getAllTasks().map(withComfyTaskSnapshot));
+            res.json(getAllTasks().map(toTaskListItem));
         }
     });
 
@@ -471,7 +477,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
                     fileSize += stat.size;
                 } catch { /* 文件不存在 */ }
             }
-            return { ...withComfyTaskSnapshot(task), file_size: fileSize };
+            return { ...toTaskListItem(task), file_size: fileSize };
         });
 
         res.json(tasksWithSize);

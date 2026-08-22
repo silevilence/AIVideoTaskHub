@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Task, TaskFilter, ProviderInfo, ApplyParams } from '../api';
-import { fetchTasks, fetchProviders, fetchProviderModels, retryTask, deleteTask } from '../api';
+import { fetchTask, fetchTasks, fetchProviders, fetchProviderModels, retryTask, deleteTask } from '../api';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Card, CardContent } from './ui/card';
@@ -118,6 +118,14 @@ export function TaskList({ refreshKey, onApplyParams }: { refreshKey: number; on
         try {
             await retryTask(id);
             await loadTasks(activeFilter);
+        } catch (err) {
+            setAlertMessage((err as Error).message);
+        }
+    };
+
+    const handleShowParams = async (task: Task) => {
+        try {
+            setParamsTask(await fetchTask(task.id));
         } catch (err) {
             setAlertMessage((err as Error).message);
         }
@@ -316,7 +324,7 @@ export function TaskList({ refreshKey, onApplyParams }: { refreshKey: number; on
                             onRetry={handleRetry}
                             onDelete={handleDeleteRequest}
                             onPreview={setPreviewTask}
-                            onShowParams={setParamsTask}
+                            onShowParams={handleShowParams}
                             providerDisplayName={providerDisplayName}
                             modelDisplayNames={modelDisplayNames}
                         />

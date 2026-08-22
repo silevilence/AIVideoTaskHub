@@ -575,7 +575,8 @@ export async function checkComfyWorkflowCompatibility(
     workflow: ComfyApiWorkflow,
     fetcher: typeof fetch = fetch,
     resolver: ComfyDnsResolver = defaultDnsResolver,
-    safeTarget?: SafeHttpTarget
+    safeTarget?: SafeHttpTarget,
+    options: { skipTemplateVariableValues?: boolean } = {}
 ): Promise<ComfyCompatibilityResult> {
     const baseUrl = normalizeComfyUiBaseUrl(value);
     if (safeTarget && new URL(baseUrl).origin !== safeTarget.origin) {
@@ -614,7 +615,13 @@ export async function checkComfyWorkflowCompatibility(
                 incompatibleInputs.push({ nodeId, classType: node.class_type, input });
                 continue;
             }
-            const reason = recognizableInputIssue(descriptors[input], node.inputs[input]);
+            const inputValue = node.inputs[input];
+            const isTemplateValue = options.skipTemplateVariableValues
+                && typeof inputValue === 'string'
+                && /\$\{[A-Za-z_][A-Za-z0-9_]*\}/.test(inputValue);
+            const reason = isTemplateValue
+                ? undefined
+                : recognizableInputIssue(descriptors[input], inputValue);
             if (reason) {
                 incompatibleInputs.push({ nodeId, classType: node.class_type, input, reason });
             }
@@ -632,6 +639,24 @@ export async function checkComfyWorkflowCompatibility(
         missingRequiredInputs,
         incompatibleInputs,
     };
+}
+
+/** 管理器在线检查：校验节点和输入名称，但把尚未渲染的模板变量留到任务预检。 */
+export function checkComfyWorkflowTemplateCompatibility(
+    value: string,
+    workflow: ComfyApiWorkflow,
+    fetcher: typeof fetch = fetch,
+    resolver: ComfyDnsResolver = defaultDnsResolver,
+    safeTarget?: SafeHttpTarget
+): Promise<ComfyCompatibilityResult> {
+    return checkComfyWorkflowCompatibility(
+        value,
+        workflow,
+        fetcher,
+        resolver,
+        safeTarget,
+        { skipTemplateVariableValues: true }
+    );
 }
 
 function isNodeConnection(value: unknown): boolean {

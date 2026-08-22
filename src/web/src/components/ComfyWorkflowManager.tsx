@@ -679,7 +679,12 @@ export function ComfyWorkflowManager() {
                                     <p className="mt-1 font-mono text-[10px] text-muted-foreground">{compatibility.baseUrl} · {compatibility.nodeTypeCount} 种节点</p>
                                     {compatibility.missingNodeTypes.length > 0 && <p className="mt-2">缺失节点：{compatibility.missingNodeTypes.join('、')}</p>}
                                     {compatibility.missingRequiredInputs.map((item) => <p key={`missing-${item.nodeId}-${item.input}`} className="mt-1">节点 {item.nodeId}（{item.classType}）缺少必填输入 {item.input}</p>)}
-                                    {compatibility.incompatibleInputs.map((item) => <p key={`${item.nodeId}-${item.input}`} className="mt-1">节点 {item.nodeId}（{item.classType}）未识别输入 {item.input}</p>)}
+                                    {compatibility.incompatibleInputs.map((item) => (
+                                        <p key={`${item.nodeId}-${item.input}`} className="mt-1">
+                                            节点 {item.nodeId}（{item.classType}）输入 {item.input}
+                                            {item.reason ? `：${item.reason}` : ' 未被当前节点识别'}
+                                        </p>
+                                    ))}
                                 </div>
                             )}
                         </aside>
