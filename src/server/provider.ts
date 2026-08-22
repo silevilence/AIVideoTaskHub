@@ -56,6 +56,11 @@ export interface ModelCapabilities {
     ratios?: string[];
 }
 
+export interface ProviderTaskContext {
+    /** 创建任务时持久化的 Provider 专属快照 */
+    extra?: Record<string, unknown>;
+}
+
 export type ModelParameterType = 'integer' | 'number' | 'string' | 'boolean' | 'option' | 'image';
 
 export interface ModelParameterDefinition {
@@ -147,10 +152,14 @@ export interface VideoProvider {
     prepareTask?(params: CreateTaskParams): Promise<CreateTaskParams> | CreateTaskParams;
 
     /** 查询平台侧任务的最新状态 */
-    getStatus(providerTaskId: string): Promise<TaskStatusResult>;
+    getStatus(providerTaskId: string, context?: ProviderTaskContext): Promise<TaskStatusResult>;
 
     /** 将临时视频 URL 下载到本地路径 */
-    downloadVideo(videoUrl: string, targetPath: string): Promise<void>;
+    downloadVideo(
+        videoUrl: string,
+        targetPath: string,
+        context?: ProviderTaskContext
+    ): Promise<void>;
 
     /** 刷新动态模型列表（可选，仅支持动态模型的 Provider 需实现） */
     refreshModels?(): Promise<ModelInfo[]>;

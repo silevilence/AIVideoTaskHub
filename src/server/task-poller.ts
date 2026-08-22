@@ -80,14 +80,18 @@ export class TaskPoller {
         }
 
         try {
-            const statusResult = await provider.getStatus(task.provider_task_id);
+            const extra = task.extra_params
+                ? JSON.parse(task.extra_params) as Record<string, unknown>
+                : undefined;
+            const context = { extra };
+            const statusResult = await provider.getStatus(task.provider_task_id, context);
 
             if (statusResult.status === 'success' && statusResult.videoUrl) {
                 const filename = `${task.provider}-${task.id}-${Date.now()}.mp4`;
                 const targetPath = path.join(this.dataDir, filename);
 
                 try {
-                    await provider.downloadVideo(statusResult.videoUrl, targetPath);
+                    await provider.downloadVideo(statusResult.videoUrl, targetPath, context);
                     updateTaskStatus(task.id, 'success', {
                         resultUrl: `/videos/${filename}`,
                     });

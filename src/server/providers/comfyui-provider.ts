@@ -6,8 +6,12 @@ import {
 import {
     checkComfyWorkflowCompatibility,
     createSafeHttpTarget,
+    downloadSafeHttpUrl,
     normalizeComfyUiBaseUrl,
+    requestSafeHttpUrl,
+    validateSafeHttpTarget,
     type ComfyDnsResolver,
+    type SafeHttpTarget,
 } from '../comfyui-connection.js';
 import { parseWorkflowTemplateDocument } from '../comfy-workflow-template.js';
 import {
@@ -19,10 +23,136 @@ import type {
     CreateTaskParams,
     CreateTaskResult,
     ModelInfo,
+    ProviderTaskContext,
     ProviderSettingSchema,
     TaskStatusResult,
     VideoProvider,
 } from '../provider.js';
+
+interface ComfyTaskSnapshot {
+    comfyuiBaseUrl: string;
+    workflow: Record<string, unknown>;
+    primaryOutput: { nodeId: string; field: string; index: number };
+    comfyuiSafeTarget?: SafeHttpTarget;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function taskSnapshot(extra: Record<string, unknown> | undefined): ComfyTaskSnapshot {
+    if (!extra || typeof extra.comfyuiBaseUrl !== 'string' || !isRecord(extra.workflow)) {
+        throw new Error('ComfyUI 任务快照不完整');
+    }
+    const output = extra.primaryOutput;
+    if (
+        !isRecord(output)
+        || typeof output.nodeId !== 'string'
+        || typeof output.field !== 'string'
+        || !Number.isInteger(output.index)
+        || (output.index as number) < 0
+    ) {
+        throw new Error('ComfyUI 任务快照缺少有效主输出声明');
+    }
+    return {
+        comfyuiBaseUrl: normalizeComfyUiBaseUrl(extra.comfyuiBaseUrl),
+        workflow: extra.workflow,
+        primaryOutput: output as ComfyTaskSnapshot['primaryOutput'],
+        comfyuiSafeTarget: isRecord(extra.comfyuiSafeTarget)
+            ? extra.comfyuiSafeTarget as unknown as SafeHttpTarget
+            : undefined,
+    };
+}
+
+function parseJsonBody(body: Buffer, label: string): Record<string, unknown> {
+    let value: unknown;
+    try {
+        value = JSON.parse(body.toString('utf8'));
+    } catch {
+        throw new Error(`${label}返回了无效 JSON`);
+    }
+    if (!isRecord(value)) throw new Error(`${label}返回了无效数据`);
+    return value;
+}
+
+function nodeValidationErrors(value: unknown): string[] {
+    if (!isRecord(value)) return [];
+    const messages: string[] = [];
+    for (const [nodeId, nodeValue] of Object.entries(value)) {
+        if (!isRecord(nodeValue) || !Array.isArray(nodeValue.errors)) continue;
+        const errors = nodeValue.errors.flatMap((entry) => {
+            if (!isRecord(entry) || typeof entry.message !== 'string') return [];
+            const details = typeof entry.details === 'string' && entry.details
+                ? ` (${entry.details})`
+                : '';
+            return [`${entry.message}${details}`];
+        });
+        if (errors.length > 0) messages.push(`节点 ${nodeId}: ${errors.join('; ')}`);
+    }
+    return messages;
+}
+
+function executionErrorMessage(status: Record<string, unknown>): string {
+    if (!Array.isArray(status.messages)) return 'ComfyUI 执行失败';
+    for (const message of status.messages) {
+        if (!Array.isArray(message) || message[0] !== 'execution_error' || !isRecord(message[1])) {
+            continue;
+        }
+        const nodeId = typeof message[1].node_id === 'string' ? message[1].node_id : '未知';
+        const detail = typeof message[1].exception_message === 'string'
+            ? message[1].exception_message
+            : '未知错误';
+        return `节点 ${nodeId} 执行失败：${detail}`;
+    }
+    return 'ComfyUI 执行失败';
+}
+
+function queueContains(value: unknown, promptId: string): boolean {
+    return Array.isArray(value) && value.some((item) => (
+        Array.isArray(item) && item[1] === promptId
+    ));
+}
+
+function outputVideoUrl(snapshot: ComfyTaskSnapshot, history: Record<string, unknown>): string {
+    const outputs = isRecord(history.outputs) ? history.outputs : {};
+    const nodeOutput = Object.hasOwn(outputs, snapshot.primaryOutput.nodeId)
+        && isRecord(outputs[snapshot.primaryOutput.nodeId])
+        ? outputs[snapshot.primaryOutput.nodeId] as Record<string, unknown>
+        : undefined;
+    const field = nodeOutput?.[snapshot.primaryOutput.field];
+    const descriptor = Array.isArray(field) ? field[snapshot.primaryOutput.index] : undefined;
+    if (!isRecord(descriptor)) {
+        throw new Error(
+            `主输出缺失：节点 ${snapshot.primaryOutput.nodeId} 的 `
+            + `${snapshot.primaryOutput.field}[${snapshot.primaryOutput.index}] 不存在`
+        );
+    }
+    const filename = typeof descriptor.filename === 'string' ? descriptor.filename : '';
+    const subfolder = typeof descriptor.subfolder === 'string' ? descriptor.subfolder : '';
+    const type = typeof descriptor.type === 'string' ? descriptor.type : '';
+    if (
+        !filename
+        || filename === '.'
+        || filename === '..'
+        || filename.includes('/')
+        || filename.includes('\\')
+        || /[\u0000-\u001f\u007f]/.test(filename)
+    ) {
+        throw new Error('主输出文件描述无效：filename 非法');
+    }
+    if (
+        subfolder.includes('\\')
+        || subfolder.split('/').some((segment) => segment === '..' || segment === '.')
+        || subfolder.startsWith('/')
+    ) {
+        throw new Error('主输出文件描述无效：subfolder 非法');
+    }
+    if (!['input', 'output', 'temp'].includes(type)) {
+        throw new Error('主输出文件描述无效：type 非法');
+    }
+    const query = new URLSearchParams({ filename, subfolder, type });
+    return `${snapshot.comfyuiBaseUrl}/view?${query.toString()}`;
+}
 
 function toModelInfo(record: WorkflowTemplateRecord): ModelInfo | undefined {
     const parsed = parseWorkflowTemplateDocument(record.document);
@@ -194,6 +324,7 @@ export class ComfyUIProvider implements VideoProvider {
                 templateName: record.name,
                 templateDocument: record.document,
                 comfyuiBaseUrl: baseUrl,
+                comfyuiSafeTarget: safeTarget,
                 workflowInputs: rendered.values,
                 resolvedWorkflowInputs,
                 imageResolutions,
@@ -203,15 +334,111 @@ export class ComfyUIProvider implements VideoProvider {
         };
     }
 
-    async createTask(_params: CreateTaskParams): Promise<CreateTaskResult> {
-        throw new Error('ComfyUI 任务执行尚未接通');
+    private async safeTarget(
+        snapshot: ComfyTaskSnapshot,
+        useSnapshotTarget = false
+    ): Promise<SafeHttpTarget> {
+        if (useSnapshotTarget && snapshot.comfyuiSafeTarget) {
+            return validateSafeHttpTarget(
+                snapshot.comfyuiBaseUrl,
+                snapshot.comfyuiSafeTarget,
+                'ComfyUI 地址'
+            );
+        }
+        return createSafeHttpTarget(
+            snapshot.comfyuiBaseUrl,
+            this.options.resolver,
+            'ComfyUI 地址'
+        );
     }
 
-    async getStatus(_providerTaskId: string): Promise<TaskStatusResult> {
-        throw new Error('ComfyUI 任务状态查询尚未接通');
+    async createTask(params: CreateTaskParams): Promise<CreateTaskResult> {
+        const snapshot = taskSnapshot(params.extra);
+        const safeTarget = await this.safeTarget(snapshot, true);
+        const response = await requestSafeHttpUrl(`${snapshot.comfyuiBaseUrl}/prompt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: snapshot.workflow }),
+            targetLabel: 'ComfyUI /prompt',
+            safeTarget,
+        }, this.options.fetcher, this.options.resolver);
+        const data = parseJsonBody(response.body, 'ComfyUI /prompt');
+        if (response.status < 200 || response.status >= 300) {
+            const errors = nodeValidationErrors(data.node_errors);
+            if (errors.length > 0) throw new Error(errors.join('\n'));
+            const fallback = isRecord(data.error) && typeof data.error.message === 'string'
+                ? data.error.message
+                : `HTTP ${response.status}`;
+            throw new Error(`ComfyUI /prompt 提交失败：${fallback}`);
+        }
+        if (typeof data.prompt_id !== 'string' || !data.prompt_id) {
+            throw new Error('ComfyUI /prompt 未返回 prompt_id');
+        }
+        return { providerTaskId: data.prompt_id };
     }
 
-    async downloadVideo(_videoUrl: string, _targetPath: string): Promise<void> {
-        throw new Error('ComfyUI 视频下载尚未接通');
+    async getStatus(
+        providerTaskId: string,
+        context?: ProviderTaskContext
+    ): Promise<TaskStatusResult> {
+        const snapshot = taskSnapshot(context?.extra);
+        const safeTarget = await this.safeTarget(snapshot, true);
+        const historyResponse = await requestSafeHttpUrl(
+            `${snapshot.comfyuiBaseUrl}/history/${encodeURIComponent(providerTaskId)}`,
+            {
+                targetLabel: 'ComfyUI /history',
+                safeTarget,
+            },
+            this.options.fetcher,
+            this.options.resolver
+        );
+        if (historyResponse.status < 200 || historyResponse.status >= 300) {
+            throw new Error(`ComfyUI /history 请求失败（HTTP ${historyResponse.status}）`);
+        }
+        const historyData = parseJsonBody(historyResponse.body, 'ComfyUI /history');
+        const history = Object.hasOwn(historyData, providerTaskId)
+            && isRecord(historyData[providerTaskId])
+            ? historyData[providerTaskId] as Record<string, unknown>
+            : undefined;
+        if (history) {
+            const status = isRecord(history.status) ? history.status : {};
+            if (status.status_str === 'error') {
+                return { status: 'failed', errorMessage: executionErrorMessage(status) };
+            }
+            if (status.completed === true || status.status_str === 'success') {
+                try {
+                    return { status: 'success', videoUrl: outputVideoUrl(snapshot, history) };
+                } catch (error) {
+                    return { status: 'failed', errorMessage: (error as Error).message };
+                }
+            }
+            return { status: 'running' };
+        }
+
+        const queueResponse = await requestSafeHttpUrl(`${snapshot.comfyuiBaseUrl}/queue`, {
+            targetLabel: 'ComfyUI /queue',
+            safeTarget,
+        }, this.options.fetcher, this.options.resolver);
+        if (queueResponse.status < 200 || queueResponse.status >= 300) {
+            throw new Error(`ComfyUI /queue 请求失败（HTTP ${queueResponse.status}）`);
+        }
+        const queue = parseJsonBody(queueResponse.body, 'ComfyUI /queue');
+        if (queueContains(queue.queue_running, providerTaskId)) return { status: 'running' };
+        return { status: 'pending' };
+    }
+
+    async downloadVideo(
+        videoUrl: string,
+        targetPath: string,
+        context?: ProviderTaskContext
+    ): Promise<void> {
+        const snapshot = taskSnapshot(context?.extra);
+        const safeTarget = await this.safeTarget(snapshot, true);
+        await downloadSafeHttpUrl(videoUrl, targetPath, {
+            targetLabel: 'ComfyUI 视频下载',
+            maxResponseBytes: 2 * 1024 * 1024 * 1024,
+            allowedContentTypes: ['video/', 'application/octet-stream'],
+            safeTarget,
+        }, this.options.fetcher, this.options.resolver);
     }
 }

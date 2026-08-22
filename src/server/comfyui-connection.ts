@@ -1,10 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import type { LookupAddress } from 'node:dns';
 import { lookup as nodeLookup } from 'node:dns/promises';
+import { createWriteStream } from 'node:fs';
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { get as httpGet } from 'node:http';
 import { get as httpsGet } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
+import path from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type { ComfyApiWorkflow } from './comfy-workflow-template.js';
 
 interface ComfyObjectInfoNode {
@@ -137,6 +143,29 @@ export interface SafeHttpResponse {
 export interface SafeHttpTarget {
     origin: string;
     address: LookupAddress;
+}
+
+export function validateSafeHttpTarget(
+    value: string,
+    target: SafeHttpTarget,
+    label = 'HTTP 地址'
+): SafeHttpTarget {
+    let url: URL;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new Error(`${label}无效`);
+    }
+    if (url.origin !== target.origin) throw new Error(`${label}与固定目标不一致`);
+    const family = isIP(target.address.address);
+    if ((family !== 4 && family !== 6) || family !== target.address.family) {
+        throw new Error(`${label}固定目标无效`);
+    }
+    assertSafeTarget(target.address.address, label);
+    return {
+        origin: url.origin,
+        address: { address: target.address.address, family },
+    };
 }
 
 export async function createSafeHttpTarget(
@@ -296,6 +325,146 @@ export async function requestSafeHttpUrl(
         throw new Error(`${label}不允许重定向`);
     }
     return response;
+}
+
+export interface SafeDownloadOptions {
+    maxResponseBytes?: number;
+    targetLabel?: string;
+    safeTarget?: SafeHttpTarget;
+    allowedContentTypes?: readonly string[];
+}
+
+function isAllowedContentType(value: string | null | undefined, allowed?: readonly string[]): boolean {
+    if (!allowed || allowed.length === 0) return true;
+    const normalized = value?.split(';')[0].trim().toLowerCase() ?? '';
+    return allowed.some((candidate) => candidate.endsWith('/')
+        ? normalized.startsWith(candidate)
+        : normalized === candidate);
+}
+
+async function requestPinnedToFile(
+    url: URL,
+    address: LookupAddress,
+    targetPath: string,
+    options: SafeDownloadOptions
+): Promise<void> {
+    const label = options.targetLabel ?? 'HTTP 下载';
+    await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let request: ReturnType<typeof httpRequest>;
+        const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            if (error) {
+                if (request && !request.destroyed) request.destroy();
+                reject(error);
+            } else {
+                resolve();
+            }
+        };
+        const timeout = setTimeout(() => finish(new Error(`${label}请求超时`)), 60_000);
+        const transport = url.protocol === 'https:' ? httpsRequest : httpRequest;
+        request = transport(url, {
+            signal: AbortSignal.timeout(60_000),
+            lookup: (_hostname, lookupOptions, callback) => {
+                if (lookupOptions.all) callback(null, [address]);
+                else callback(null, address.address, address.family);
+            },
+            ...(url.protocol === 'https:' ? { servername: normalizedHostname(url.hostname) } : {}),
+        }, (response) => {
+            if ((response.statusCode ?? 0) >= 300 && (response.statusCode ?? 0) < 400) {
+                response.resume();
+                finish(new Error(`${label}不允许重定向`));
+                return;
+            }
+            if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
+                response.resume();
+                finish(new Error(`${label}失败（HTTP ${response.statusCode ?? 0}）`));
+                return;
+            }
+            if (!isAllowedContentType(response.headers['content-type'], options.allowedContentTypes)) {
+                response.resume();
+                finish(new Error(`${label}响应类型无效`));
+                return;
+            }
+            let byteLength = 0;
+            const limiter = new Transform({
+                transform(chunk: Buffer, _encoding, callback) {
+                    byteLength += chunk.length;
+                    if (byteLength > (options.maxResponseBytes ?? 2 * 1024 * 1024 * 1024)) {
+                        callback(new Error(`${label}响应过大`));
+                        return;
+                    }
+                    callback(null, chunk);
+                },
+            });
+            void pipeline(response, limiter, createWriteStream(targetPath, { flags: 'wx' }))
+                .then(() => {
+                    if (byteLength === 0) finish(new Error(`${label}内容为空`));
+                    else finish();
+                })
+                .catch((error) => finish(error as Error));
+        });
+        request.once('upgrade', (_response, socket) => {
+            socket.destroy();
+            finish(new Error(`${label}不允许协议升级`));
+        });
+        request.once('error', (error) => finish(error));
+        request.end();
+    });
+}
+
+export async function downloadSafeHttpUrl(
+    value: string,
+    targetPath: string,
+    options: SafeDownloadOptions = {},
+    fetcher: typeof fetch = fetch,
+    resolver: ComfyDnsResolver = defaultDnsResolver
+): Promise<void> {
+    const label = options.targetLabel ?? 'HTTP 下载';
+    let url: URL;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new Error(`${label}地址无效`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error(`${label}仅支持 HTTP 或 HTTPS`);
+    }
+    if (!url.hostname || url.username || url.password) throw new Error(`${label}地址无效`);
+    assertSafeTarget(normalizedHostname(url.hostname), label);
+    const addresses = options.safeTarget
+        ? [validateSafeHttpTarget(value, options.safeTarget, label).address]
+        : await resolveSafeAddresses(value, resolver, label);
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
+    try {
+        if (fetcher === nativeFetch) {
+            await requestPinnedToFile(url, addresses[0], temporaryPath, options);
+        } else {
+            const response = await requestSafeHttpUrl(value, {
+                maxResponseBytes: options.maxResponseBytes,
+                targetLabel: label,
+                safeTarget: options.safeTarget,
+            }, fetcher, resolver);
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(`${label}失败（HTTP ${response.status}）`);
+            }
+            if (!isAllowedContentType(
+                response.headers.get('content-type'),
+                options.allowedContentTypes
+            )) {
+                throw new Error(`${label}响应类型无效`);
+            }
+            if (response.body.length === 0) throw new Error(`${label}内容为空`);
+            await writeFile(temporaryPath, response.body, { flag: 'wx' });
+        }
+        await rename(temporaryPath, targetPath);
+    } catch (error) {
+        await unlink(temporaryPath).catch(() => undefined);
+        throw error;
+    }
 }
 
 function requestPinnedObjectInfo(

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
 import { createServer } from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import {
     checkComfyWorkflowCompatibility,
+    downloadSafeHttpUrl,
     normalizeComfyUiBaseUrl,
     requestSafeHttpUrl,
 } from '../src/server/comfyui-connection.js';
@@ -113,6 +117,35 @@ describe('ComfyUI 连接与模板兼容性', () => {
             ))).rejects.toThrow('响应中断');
         } finally {
             await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+
+    it('将原生 HTTP 响应流式写入临时文件并原子落盘', async () => {
+        const bytes = Buffer.alloc(256 * 1024, 7);
+        const server = createServer((_request, response) => {
+            response.writeHead(200, {
+                'Content-Type': 'video/mp4',
+                'Content-Length': String(bytes.length),
+            });
+            response.end(bytes);
+        });
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('测试服务器未监听 TCP 端口');
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'comfyui-download-'));
+        const targetPath = path.join(directory, 'result.mp4');
+
+        try {
+            await downloadSafeHttpUrl(
+                `http://127.0.0.1:${address.port}/view?filename=result.mp4`,
+                targetPath,
+                { maxResponseBytes: bytes.length }
+            );
+            expect(fs.readFileSync(targetPath)).toEqual(bytes);
+            expect(fs.readdirSync(directory)).toEqual(['result.mp4']);
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+            fs.rmSync(directory, { recursive: true, force: true });
         }
     });
 
