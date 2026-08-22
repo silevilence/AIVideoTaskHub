@@ -6,6 +6,7 @@ import { MockProvider } from './providers/mock-provider.js';
 import { SiliconFlowProvider } from './providers/siliconflow-provider.js';
 import { VolcEngineProvider } from './providers/volcengine-provider.js';
 import { AIHubMixProvider } from './providers/aihubmix-provider.js';
+import { ComfyUIProvider } from './providers/comfyui-provider.js';
 import { TaskPoller } from './task-poller.js';
 import { McpServerManager } from './mcp/mcp-server.js';
 import { logger } from './logger.js';
@@ -40,6 +41,7 @@ registry.register(
     apiKey: process.env.AIHUBMIX_API_KEY || '',
   })
 );
+registry.register(new ComfyUIProvider());
 
 // 从数据库加载已保存的 Provider 设置
 for (const name of registry.listNames()) {

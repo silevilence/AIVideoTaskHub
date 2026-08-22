@@ -15,6 +15,7 @@ import {
     normalizeComfyUiBaseUrl,
 } from './comfyui-connection.js';
 import { getSetting, setSetting } from './task-model.js';
+import type { ProviderRegistry } from './provider-registry.js';
 
 const COMFYUI_BASE_URL_SETTING = 'provider:comfyui:base_url';
 
@@ -193,7 +194,7 @@ function resolveCompatibilityDocument(body: unknown): string | undefined {
 }
 
 /** Routes shared by the workflow manager and the future ComfyUI provider. */
-export function createComfyUiRouter(): Router {
+export function createComfyUiRouter(registry?: ProviderRegistry): Router {
     const router = Router();
 
     router.get('/settings', (_req, res) => {
@@ -208,6 +209,7 @@ export function createComfyUiRouter(): Router {
         try {
             const baseUrl = normalizeComfyUiBaseUrl(req.body.baseUrl);
             setSetting(COMFYUI_BASE_URL_SETTING, baseUrl);
+            registry?.get('comfyui')?.applySettings({ base_url: baseUrl });
             res.json({ baseUrl });
         } catch (error) {
             res.status(400).json({ error: databaseErrorMessage(error) });

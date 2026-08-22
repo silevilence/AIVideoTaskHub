@@ -184,6 +184,7 @@ export function registerAllTools(
                     capabilities: m.capabilities || null,
                     disabled: m.disabled || false,
                     disabledReason: m.disabledReason || null,
+                    parameterSchema: m.parameterSchema || null,
                 })),
             };
 

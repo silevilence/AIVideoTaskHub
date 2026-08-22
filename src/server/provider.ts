@@ -56,6 +56,30 @@ export interface ModelCapabilities {
     ratios?: string[];
 }
 
+export type ModelParameterType = 'integer' | 'number' | 'string' | 'boolean' | 'option' | 'image';
+
+export interface ModelParameterDefinition {
+    key: string;
+    label: string;
+    description?: string;
+    type: ModelParameterType;
+    default?: unknown;
+    min?: number;
+    max?: number;
+    step?: number;
+    multiline?: boolean;
+    minLength?: number;
+    maxLength?: number;
+    options?: { label: string; value: string }[];
+}
+
+export interface ModelParameterSchema {
+    kind: 'comfyui-workflow';
+    variables: ModelParameterDefinition[];
+    primaryDescription?: string;
+    primaryOutput: { nodeId: string; field: string; index: number };
+}
+
 /** 模型信息（包含 displayName 和能力声明） */
 export interface ModelInfo {
     /** 模型 ID（唯一标识） */
@@ -68,6 +92,8 @@ export interface ModelInfo {
     disabled?: boolean;
     /** 禁用原因提示 */
     disabledReason?: string;
+    /** Provider/模型特定的动态任务参数 */
+    parameterSchema?: ModelParameterSchema;
 }
 
 /** Provider 设置项声明 */
@@ -107,6 +133,9 @@ export interface VideoProvider {
 
     /** 应用设置（从数据库加载或用户更新时调用） */
     applySettings(settings: Record<string, string>): void;
+
+    /** 持久化前校验并规范化设置 */
+    normalizeSettings?(settings: Record<string, string>): Record<string, string>;
 
     /** 获取当前设置值（脱敏后，用于前端展示） */
     getCurrentSettings(): Record<string, string>;

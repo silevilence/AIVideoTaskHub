@@ -62,7 +62,7 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
     const router = Router();
     const dataDir = process.env.DATA_DIR || 'data';
 
-    router.use('/comfyui', createComfyUiRouter());
+    router.use('/comfyui', createComfyUiRouter(registry));
     router.use('/comfyui/workflows', createComfyWorkflowRouter());
 
     // 视频提供商 API Key 解析辅助
@@ -168,14 +168,20 @@ export function createTaskRouter(registry: ProviderRegistry, mcpManager?: McpSer
             res.status(400).json({ error: '无效的设置数据' });
             return;
         }
+        let normalizedSettings: Record<string, string>;
+        try {
+            normalizedSettings = provider.normalizeSettings?.(settings) ?? settings;
+            provider.applySettings(normalizedSettings);
+        } catch (error) {
+            res.status(400).json({ error: (error as Error).message });
+            return;
+        }
         // 持久化到数据库
-        for (const [key, value] of Object.entries(settings)) {
+        for (const [key, value] of Object.entries(normalizedSettings)) {
             if (typeof value === 'string' && value.trim()) {
                 setSetting(`provider:${providerName}:${key}`, value.trim());
             }
         }
-        // 应用到 Provider 实例
-        provider.applySettings(settings);
         res.json({ ok: true });
     });
 
