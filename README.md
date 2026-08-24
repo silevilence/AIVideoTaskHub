@@ -50,6 +50,15 @@ AI Video Task Hub 是一个面向个人使用场景的轻量级 AI 视频生成�
 - 删除满 30 天后可彻底删除，并清理本地媒体文件
 - 清理本地图片时会检查是否仍被其他任务引用，避免误删共享素材
 
+### ComfyUI 工作流接入（实验性）
+
+- 可将本地 ComfyUI 作为视频生成平台接入，创建、轮询、下载与回收站流程与现有平台一致
+- 设置中新增「ComfyUI 工作流」管理页，可创建、编辑、复制、启停、删除、导入和导出工作流模板，模板由 YAML 元数据与 API 格式 JSON 组成
+- 选择工作流模板后自动按模板变量渲染动态任务表单，支持整数、小数、文本、布尔、选项和参考图片等字段，并自动填入默认值
+- 可配置默认 ComfyUI 地址并测试连通性；创建任务前自动检查目标实例的节点兼容性，不通过时阻止创建并列出问题清单，也可为单次任务临时指定地址
+- 任务中的参考图片会自动上传到目标 ComfyUI 实例并注入工作流，无需手动处理
+- 模板后续修改或删除不影响已创建任务，历史任务仍可正常查看、重试和套用参数
+
 ### 设置与模型管理
 
 - 统一管理各种视频平台和文本提示词大语言模型配置
@@ -58,7 +67,7 @@ AI Video Task Hub 是一个面向个人使用场景的轻量级 AI 视频生成�
 - 设置项支持下拉选择框，配置操作更直观
 - AIHubMix 支持直接接入和 OpenAI SDK 两种调用模式
 - AIHubMix 支持动态模型列表缓存，可手动刷新模型
-- 设置页面拆分为视频设置、文本设置、提示词库和 MCP 服务四个标签页
+- 设置页面拆分为视频设置、文本设置、提示词库、ComfyUI 工作流和 MCP 服务五个标签页
 
 ### MCP 服务（模型上下文协议）
 
@@ -83,6 +92,7 @@ AI Video Task Hub 是一个面向个人使用场景的轻量级 AI 视频生成�
 | SiliconFlow 硅基流动 | 已接入固定模型 | 支持 Wan 2.2 文生视频和图生视频 |
 | 火山引擎 Seedance | 已接入固定模型 | 支持 Seedance 2.0/2.0 Fast/1.5/1.0 系列，涵盖文生视频、首帧、首尾帧、参考图、分辨率、比例、时长、音频等能力 |
 | AIHubMix | 已接入动态模型 | 支持直接接入和 OpenAI SDK 两种调用模式，模型列表动态拉取并缓存 |
+| ComfyUI | 实验性接入 | 接入本地 ComfyUI 服务，以工作流模板作为模型，支持动态变量表单与异步视频生成 |
 
 其中：
 
@@ -90,6 +100,7 @@ AI Video Task Hub 是一个面向个人使用场景的轻量级 AI 视频生成�
 - 火山引擎当前内置 7 个 Seedance 模型（2.0、2.0 Fast、1.5 Pro、1.0 Pro、1.0 Pro Fast、1.0 Lite 文生视频、1.0 Lite 图生视频）
 - AIHubMix 的视频模型由后端动态获取，不在 README 中硬编码完整列表
 - 当前 AIHubMix 已内置多组能力映射，覆盖 Sora、Veo、通义万相、即梦 3.0 等常见视频模型，实际可用列表以平台返回为准
+- ComfyUI 的模型列表由已启用的工作流模板动态构成，模板在设置的「ComfyUI 工作流」页维护；该接入为实验性功能，仅支持无认证的本地或内网实例
 
 ## 安装与运行
 
@@ -192,7 +203,7 @@ npm run start
 
 | 路径 | 说明 |
 |------|------|
-| data/app.db | SQLite 数据库，保存任务记录、Provider 设置、文本设置、提示词和提示词目录 |
+| data/app.db | SQLite 数据库，保存任务记录、Provider 设置、文本设置、提示词、提示词目录和 ComfyUI 工作流模板 |
 | data/uploads | 上传图片和可复用图片素材 |
 | data/videos | 下载到本地的视频结果 |
 | data/logs | 运行日志文件 |
@@ -209,6 +220,19 @@ npm run start
 | POST | /api/providers/:provider/refresh-models | 刷新指定平台的动态模型缓存 |
 | GET | /api/settings | 获取平台设置、当前值与来源 |
 | PUT | /api/settings/:provider | 更新指定平台设置 |
+| GET | /api/comfyui/settings | 获取默认 ComfyUI 地址 |
+| PUT | /api/comfyui/settings | 保存默认 ComfyUI 地址 |
+| POST | /api/comfyui/connection/test | 测试 ComfyUI 连通性 |
+| POST | /api/comfyui/workflows/check | 在线检查模板与目标实例的节点兼容性 |
+| GET | /api/comfyui/workflows | 获取工作流模板列表，支持 q 搜索 |
+| POST | /api/comfyui/workflows | 新建工作流模板 |
+| POST | /api/comfyui/workflows/import | 导入工作流模板 |
+| GET | /api/comfyui/workflows/:id/export | 导出工作流模板文档 |
+| PUT | /api/comfyui/workflows/:id/enabled | 启用/停用工作流模板 |
+| POST | /api/comfyui/workflows/:id/duplicate | 复制工作流模板 |
+| GET | /api/comfyui/workflows/:id | 获取工作流模板详情 |
+| PUT | /api/comfyui/workflows/:id | 更新工作流模板 |
+| DELETE | /api/comfyui/workflows/:id | 删除工作流模板 |
 | GET | /api/text-settings | 获取文本平台与提示词设置 |
 | PUT | /api/text-settings | 更新文本平台与提示词设置 |
 | GET | /api/text-settings/model-languages | 获取特定模型语言覆盖 |

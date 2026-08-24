@@ -3,14 +3,14 @@
 ## 📌 项目基本信息
 - **项目定位**：个人家用的 AI 视频生成 API 聚合与异步任务管理系统。
 - **架构模式**：前后端一体化（Monolithic），Node.js 负责 API、静态资源托管与后台轮询，单 Docker 镜像部署。
-- **当前代码版本**：1.4.3（以 package.json 为准）
-- **最近变更记录**：最新 Change Log 条目为 V1.4.3
-- **已接入平台**：SiliconFlow（硅基流动）、火山引擎 Seedance、AIHubMix。
+- **当前代码版本**：1.5.0（以 package.json 为准）
+- **最近变更记录**：最新 Change Log 条目为 V1.5.0
+- **已接入平台**：SiliconFlow（硅基流动）、火山引擎 Seedance、AIHubMix、ComfyUI（实验性）。
 
 ## 🛠️ 技术栈与依赖包
-- **后端**：Node.js、Express 5.2.1、better-sqlite3 12.8.0、openai 6.34.0、@modelcontextprotocol/sdk 1.29.0、zod 4.4.3、TypeScript 6.0.2
+- **后端**：Node.js、Express 5.2.1、better-sqlite3 12.8.0、openai 6.34.0、@modelcontextprotocol/sdk 1.29.0、zod 4.4.3、yaml 2.9.0、jsonc-parser 3.3.1、TypeScript 6.0.2
 - **前端**：React 19.2.4、React DOM 19.2.4、Vite 6.4.1、Tailwind CSS 4.2.2、shadcn/ui、Lucide React 1.7.0
-- **测试**：Vitest 2.1.9、Supertest 7.2.2
+- **测试**：Vitest 2.1.9、Supertest 7.2.2、@testing-library/react 16.3.0、@testing-library/user-event 14.6.1、jsdom 24.1.3
 - **运行时**：tsx 4.21.0
 - **工程化**：concurrently 9.2.1、@tailwindcss/vite 4.0、@vitejs/plugin-react 4.7.0
 - **语言**：TypeScript（全栈，ESM）
@@ -33,6 +33,13 @@
 │   │   ├── task-poller.ts           # 后台轮询 Worker（状态同步、下载、重试）
 │   │   ├── task-router.ts           # API 路由
 │   │   ├── text-settings.ts         # 文本 AI 设置（TextModel 含 vision 字段、默认 Vision 模型配置）
+│   │   ├── comfy-workflow-model.ts  # ComfyUI 工作流模板数据访问层
+│   │   ├── comfy-workflow-template.ts # 组合文档解析/序列化与模板校验（错误/警告分级）
+│   │   ├── comfy-workflow-renderer.ts # 变量令牌类型安全替换与渲染
+│   │   ├── comfy-workflow-router.ts # ComfyUI 模板/连接设置/兼容性检查路由
+│   │   ├── comfy-task-snapshot.ts   # ComfyUI 任务快照读取与视图
+│   │   ├── comfyui-connection.ts    # ComfyUI 地址规范化、连通性与节点兼容性检查
+│   │   ├── comfyui-images.ts        # 图片获取与上传到 ComfyUI /upload/image
 │   │   ├── mcp/
 │   │   │   ├── mcp-server.ts        # MCP 服务端管理器（生命周期、Streamable HTTP 传输）
 │   │   │   └── mcp-tools.ts         # MCP 工具注册与实现（6 个核心工具）
@@ -40,7 +47,8 @@
 │   │       ├── mock-provider.ts
 │   │       ├── siliconflow-provider.ts
 │   │       ├── volcengine-provider.ts
-│   │       └── aihubmix-provider.ts
+│   │       ├── aihubmix-provider.ts
+│   │       └── comfyui-provider.ts   # ComfyUI Provider（模板即模型、快照、重试）
 │   └── web/
 │       ├── index.html
 │       ├── vite.config.ts           # Vite 配置，构建输出到 src/web/dist
@@ -57,15 +65,19 @@
 │           │   ├── PromptOptimizer.tsx # AI 提示词智能优化组件
 │           │   ├── TaskList.tsx        # 任务列表、筛选、预览、下载、套用参数
 │           │   ├── RecycleBin.tsx      # 回收站、分类筛选、恢复、彻底删除
-│           │   ├── SettingsPanel.tsx   # Provider 设置、来源展示、模型刷新、MCP 服务
-│           │   ├── TextSettingsPanel.tsx # 文本模型与语言设置面板
-│           │   ├── ThemeToggle.tsx
-│           │   ├── McpSettingsPanel.tsx # MCP 服务启停控制、状态显示、工具列表
-│           │   └── ui/                # 基础 UI 组件（含 markdown-editor）
+│           ├── SettingsPanel.tsx   # Provider 设置、来源展示、模型刷新、MCP 服务（五标签切换）
+│           ├── TextSettingsPanel.tsx # 文本模型与语言设置面板
+│           ├── ComfyWorkflowManager.tsx # ComfyUI 工作流模板管理（搜索、CRUD、导入导出、兼容性检查）
+│           ├── ComfyTaskFields.tsx # ComfyUI 动态任务表单（按模板变量渲染）
+│           ├── ComfyTaskSnapshotDetails.tsx # ComfyUI 任务快照详情展示
+│           ├── ThemeToggle.tsx
+│           ├── McpSettingsPanel.tsx # MCP 服务启停控制、状态显示、工具列表
+│           └── ui/                # 基础 UI 组件（含 markdown-editor、json-editor）
 │           ├── hooks/
 │           │   └── use-theme.ts
 │           └── lib/
-│               └── utils.ts
+│               ├── utils.ts
+│               └── comfy-workflow-editor.ts # 模板 JSON 编辑器状态与格式化逻辑
 ├── tests/                           # Provider、路由、轮询器、回收站、提示词库、LLM 客户端、UI 逻辑测试
 ├── refs/                            # 第三方 API 文档缓存
 ├── data/                            # 数据目录（数据库、上传、视频、日志）
@@ -89,9 +101,9 @@
 **已注册工具**：
 | 工具名 | 说明 |
 |--------|------|
-| `get_models` | 聚合查询所有供应商当前支持的可用模型矩阵 |
-| `get_param_spec` | 查询指定供应商及模型对应的前置入参约束与配置协议 |
-| `submit_task` | 基于 Prompt、参考图像（URL/Base64）、供应商、模型及动态参数提交生成任务 |
+| `get_models` | 聚合查询所有供应商当前支持的可用模型矩阵（ComfyUI 返回已启用模板） |
+| `get_param_spec` | 查询指定供应商及模型对应的前置入参约束与配置协议（ComfyUI 返回变量 schema） |
+| `submit_task` | 基于 Prompt、参考图像（URL/Base64）、供应商、模型及动态参数提交生成任务（ComfyUI 支持 `workflowInputs`、临时地址 `comfyuiBaseUrl`、历史套用 `sourceTaskId`） |
 | `query_all_tasks` | 批量检索全局任务列表，返回任务 ID、状态、模型、Prompt 摘要 |
 | `query_task_detail` | 基于任务 ID 精确查询完整生命周期状态及全量入参快照 |
 | `get_video_asset` | 基于任务 ID 获取视频下载链接（内置状态屏障：仅成功任务可获取） |
@@ -101,7 +113,19 @@
 - **模型能力声明**：`ModelCapabilities` 描述图生视频、首尾帧、参考图、音频、固定镜头、分辨率、时长、比例等能力，前端按能力动态渲染表单。
 - **设置项声明**：`ProviderSettingSchema` 定义设置项的 `key`、`label`、`secret`、`required`、`defaultValue`、`description` 和 `options`（可选项列表，设置后前端渲染为下拉框）。
 - **动态模型刷新**：Provider 可选实现 `refreshModels`、`needsModelRefresh`、`getCacheData`。当前 AIHubMix 使用该机制缓存模型列表，并通过设置表持久化更新时间。
+- **动态参数协议（V1.5.0）**：`ModelInfo.parameterSchema` 声明 Provider 专属的动态任务参数（当前 `kind: 'comfyui-workflow'`，含变量定义、主描述变量与主输出规则），Web 创建页与 MCP `get_param_spec` 共用。
+- **任务扩展点（V1.5.0）**：Provider 可选实现 `prepareTask`（本地落库前校验并生成快照）、`prepareRetry`（重试前基于快照重新验证）、`normalizeSettings`（保存前校验规范化设置）；`getStatus`/`downloadVideo` 可接收 `ProviderTaskContext` 携带快照。
 - **注册中心**：`ProviderRegistry` 负责注册、查找和列出 Provider。
+
+### ComfyUI 接入（实验性）
+- **模板即模型**：`comfyui` Provider 的模型列表等于已启用的工作流模板；模板使用稳定 ID，名称仅用于展示。首版仅支持无认证的 HTTP/HTTPS 实例。
+- **组合文档**：模板正文保存为「YAML front matter + ComfyUI API 格式 JSON」，由 `comfy-workflow-template.ts` 解析与校验；校验区分阻止保存的错误与可确认后保存的未使用变量警告。
+- **动态表单**：变量支持 `integer`/`number`/`string`/`boolean`/`option`/`image`，经 `comfy-workflow-renderer.ts` 类型安全替换 `inputs` 中的 `${name}` 令牌；变量只能出现在 `inputs` 值位置，非字符串变量不得内嵌插值。
+- **强制预检**：创建任务时按本次实际 Base URL 读取 `/object_info` 检查节点兼容性，地址不可达或节点缺失时阻止本地任务创建与远端排队；预检结果不得跨地址复用。
+- **任务快照**：创建任务时把模板文档、变量值、图片解析结果、主输出规则和实际地址写入 `extra_params`（含 `snapshotVersion`）；模板后续编辑、停用或删除不影响历史任务查看、重试和套用参数。
+- **轮询与下载**：通过任务快照中的地址查询队列与 `/history/{prompt_id}` 映射四态生命周期，成功后按主输出选择器下载单个视频到本地。
+- **MCP 兼容**：`get_models` 将已启用模板列为 ComfyUI 模型，`get_param_spec` 返回变量 schema，`submit_task` 接受 `workflowInputs`、临时地址 `comfyuiBaseUrl` 与历史套用 `sourceTaskId`。
+- **边界**：首版不支持 UI/画布工作流转换、认证、多资产输出、WebSocket 进度、可选变量与模板版本历史。
 
 ### Prompt 系统
 - **独立数据层**：`prompt-model.ts` 管理 `prompts` 与 `prompt_folders` 表，并负责默认 Prompt 读写。
@@ -113,11 +137,12 @@
 ### 任务生命周期
 `pending` → `running` → `success` / `failed`
 
-- 创建任务时先写入 `tasks` 表，再调用 Provider 创建远端任务。
-- 轮询器读取 `pending` / `running` 任务，调用 Provider 查询状态。
+- 创建任务时先写入 `tasks` 表，再调用 Provider 创建远端任务；ComfyUI 任务在本地落库前经 `prepareTask` 生成任务快照。
+- 轮询器读取 `pending` / `running` 任务，调用 Provider 查询状态（ComfyUI 始终使用任务快照中的地址）。
 - 状态成功后下载视频到本地 `data/videos/`，再把相对路径写入 `result_url`。
-- 状态失败时记录 `error_message`，并按配置进行重试。
+- 状态失败时记录 `error_message`，并按配置进行重试；ComfyUI 重试经 `prepareRetry` 基于快照重新验证并重置任务。
 - 删除任务时写入 `deleted_at` 进入回收站；恢复时清空 `deleted_at`；彻底删除时写入 `purged_at` 并清理本地文件。
+- 任务列表/回收站列表使用轻量查询（`getTaskList`/`filterTaskList`/`getDeletedTaskList`），刻意不读取可能很大的工作流快照 `extra_params`。
 
 ### 数据库
 
@@ -158,8 +183,16 @@
 - `created_at`: 创建时间
 - `updated_at`: 更新时间
 
+#### comfy_workflow_templates 表（V1.5.0）
+- `id`: 模板稳定 ID（TEXT 主键）
+- `name`: 模板名称，不区分大小写唯一
+- `document`: 组合文档（YAML front matter + API 格式 JSON）
+- `enabled`: 是否启用（1/0），仅启用模板作为 ComfyUI 模型可见
+- `created_at`: 创建时间
+- `updated_at`: 更新时间
+
 ### 数据库迁移策略
-- `database.ts` 在启动时自动创建 `tasks`、`settings`、`prompt_folders`、`prompts` 表。
+- `database.ts` 在启动时自动创建 `tasks`、`settings`、`prompt_folders`、`prompts`、`comfy_workflow_templates` 表。
 - 对已有库进行轻量迁移：缺少 `deleted_at`、`extra_params`、`purged_at` 时自动补列。
 - 测试环境统一使用 `initDb(':memory:')`。
 
@@ -169,7 +202,10 @@
 - **PromptOptimizer**：支持对话式提示词优化、流式输出、模板选择与快速采纳。
 - **TaskList**：支持任务筛选、状态展示、视频预览、错误查看、参数详情和参数套用。
 - **RecycleBin**：支持回收站浏览、恢复、彻底删除、媒体大小展示和参数套用。支持按服务商、状态、提示词等筛选。
-- **SettingsPanel**：支持视频设置、文本设置、提示词库、MCP 服务四标签切换，并显示环境变量/本地保存来源、AIHubMix 模型刷新。
+- **SettingsPanel**：支持视频设置、文本设置、提示词库、ComfyUI 工作流、MCP 服务五标签切换，并显示环境变量/本地保存来源、AIHubMix 模型刷新；创建页「管理 ComfyUI 工作流」入口可直接跳转到 ComfyUI 标签。
+- **ComfyWorkflowManager**：ComfyUI 模板搜索、新建、编辑、复制、启停、删除、导入导出，JSON 编辑器提供语法高亮/格式化/行列错误提示，支持对默认实例的在线节点兼容性检查。
+- **ComfyTaskFields**：按模板变量定义渲染动态表单（整数、小数、文本、布尔、选项、图片），自动填入默认值，支持单次任务临时覆盖 ComfyUI 地址。
+- **ComfyTaskSnapshotDetails**：任务详情与回收站中的 ComfyUI 快照展示（模板、变量、主输出、实际地址、图片预览）。
 - **TextSettingsPanel**：支持配置独立的文本 Provider、模型参数项和视频模型语言覆盖。
 - **McpSettingsPanel**：MCP 服务启停控制、运行状态显示、连接地址复制、工具列表展示。
 - **ThemeToggle**：管理亮色/暗色主题切换。
@@ -183,6 +219,19 @@
 | POST | `/api/providers/:provider/refresh-models` | 刷新支持动态模型的 Provider |
 | GET | `/api/settings` | 获取 Provider 设置、当前值和来源 |
 | PUT | `/api/settings/:provider` | 更新指定 Provider 设置 |
+| GET | `/api/comfyui/settings` | 获取默认 ComfyUI 地址 |
+| PUT | `/api/comfyui/settings` | 保存默认 ComfyUI 地址 |
+| POST | `/api/comfyui/connection/test` | 测试 ComfyUI 连通性 |
+| POST | `/api/comfyui/workflows/check` | 在线检查模板与目标实例的节点兼容性 |
+| GET | `/api/comfyui/workflows` | 获取工作流模板列表，支持 `q` 搜索 |
+| POST | `/api/comfyui/workflows` | 新建工作流模板 |
+| POST | `/api/comfyui/workflows/import` | 导入工作流模板 |
+| GET | `/api/comfyui/workflows/:id/export` | 导出工作流模板文档 |
+| PUT | `/api/comfyui/workflows/:id/enabled` | 启用/停用工作流模板 |
+| POST | `/api/comfyui/workflows/:id/duplicate` | 复制工作流模板 |
+| GET | `/api/comfyui/workflows/:id` | 获取工作流模板详情 |
+| PUT | `/api/comfyui/workflows/:id` | 更新工作流模板 |
+| DELETE | `/api/comfyui/workflows/:id` | 删除工作流模板 |
 | POST | `/api/upload` | 上传图片，限制 10MB |
 | GET | `/api/uploads` | 获取已上传图片列表 |
 | GET | `/api/text-settings` | 获取文本设置 |
